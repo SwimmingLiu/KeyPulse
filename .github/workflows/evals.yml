@@ -1,8 +1,9 @@
 name: evals
 
 # Runs the plugin eval suite (`claude plugin eval`). These are real model calls,
-# so the job is opt-in: on a schedule, or manually. It needs an API credential
-# in the ANTHROPIC_API_KEY repository secret.
+# so the job is opt-in: on a schedule, or by manual dispatch. It needs an API
+# credential in the ANTHROPIC_API_KEY repository secret; without it the job
+# reports success with a notice instead of failing.
 on:
   workflow_dispatch:
   schedule:
@@ -16,23 +17,40 @@ jobs:
     env:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
     steps:
+      - name: Check for API key
+        id: key
+        run: |
+          if [ -n "$ANTHROPIC_API_KEY" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::ANTHROPIC_API_KEY is not set; skipping evals."
+          fi
+
       - uses: actions/checkout@v4
+        if: steps.key.outputs.present == 'true'
+
       - uses: actions/setup-python@v5
+        if: steps.key.outputs.present == 'true'
         with:
           python-version: "3.12"
 
       - name: Install Claude Code
+        if: steps.key.outputs.present == 'true'
         run: npm install -g @anthropic-ai/claude-code
 
       - name: Validate plugin
+        if: steps.key.outputs.present == 'true'
         run: claude plugin validate . --strict
 
-      - name: Regenerate replay fixtures from the recording
-        # The eval cases replay recorded provider values, so no network or
-        # browser is needed. This step only asserts the recording is readable.
+      - name: Check replay recordings
+        if: steps.key.outputs.present == 'true'
+        # Cases replay recorded provider values, so the suite needs no network
+        # and no browser. This asserts each case still ships a usable recording.
         run: python evals/fixtures/verify_recording.py
 
       - name: Run eval suite
+        if: steps.key.outputs.present == 'true'
         # Bash is needed for the CLI; Skill must be granted or the agent cannot
         # load the plugin skill in this sandbox. 0.8 lets one grader miss.
         run: |
@@ -44,7 +62,7 @@ jobs:
             --output-dir evals/results
 
       - name: Upload eval report
-        if: always()
+        if: always() && steps.key.outputs.present == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: eval-results
