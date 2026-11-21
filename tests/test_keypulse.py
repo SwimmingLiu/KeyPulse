@@ -1073,3 +1073,39 @@ class BrowserFailureReportingTests(unittest.TestCase):
             ],
         )
         self.assertEqual(_unindexed(result), ["a"])
+
+
+class DoctorTests(unittest.TestCase):
+    def test_healthy_install_passes(self):
+        from keypulse.doctor import run_checks
+
+        checks = run_checks(settings(cache_dir=Path("/tmp/keypulse-doctor-ok")))
+        labels = {c["label"]: c for c in checks}
+        self.assertTrue(labels["package"]["ok"])
+        self.assertTrue(labels["providers"]["ok"])
+        self.assertTrue(labels["cache_dir"]["ok"])
+        self.assertNotIn("traceback", " ".join(c["detail"] for c in checks).lower())
+
+    def test_unwritable_cache_fails_without_crashing(self):
+        from keypulse.doctor import run_checks
+
+        checks = run_checks(settings(cache_dir=Path("/proc/nope/keypulse")))
+        cache = next(c for c in checks if c["label"] == "cache_dir")
+        self.assertFalse(cache["ok"])
+        self.assertIn("/proc/nope/keypulse", cache["detail"])
+
+    def test_optional_transports_never_fail(self):
+        from keypulse.doctor import run_checks
+
+        checks = run_checks(settings(cache_dir=Path("/tmp/keypulse-doctor-opt")))
+        for label in ("baidu_cookie", "browser_bridge"):
+            check = next(c for c in checks if c["label"] == label)
+            self.assertTrue(check["ok"], f"{label} must be informational only")
+
+    def test_doctor_cli_exit_codes(self):
+        from types import SimpleNamespace
+
+        from keypulse.doctor import cmd_doctor
+
+        ok_args = SimpleNamespace(format="json", no_cache=False, offline=False)
+        self.assertEqual(cmd_doctor(ok_args), 0)

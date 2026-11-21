@@ -19,6 +19,12 @@ jobs:
         run: python -m unittest discover -s tests -v
       - name: Compile check
         run: python -m compileall -q src bin/keypulse
+      - name: Verify eval recordings
+        run: python evals/fixtures/verify_recording.py
+      - name: Verification skill smoke test
+        # Proves the generated verify-keypulse skill still works: doctor, three
+        # recipes, a failure path, and evidence surviving cleanup. Offline.
+        run: .claude/skills/verify-keypulse/scripts/smoke.sh ci-${{ github.run_id }}
 
   plugin:
     name: plugin manifest

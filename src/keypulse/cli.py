@@ -20,6 +20,7 @@ from typing import Sequence
 from . import __version__
 from .config import Settings
 from .expand import add_modifiers, detect_language, expand, suggest_seeds
+from .doctor import cmd_doctor
 from .login import cmd_login
 from .providers import build_registry
 from .render import render_json, render_leaders, render_markdown, render_table
@@ -72,6 +73,12 @@ def build_parser() -> argparse.ArgumentParser:
     seeds.add_argument("--limit", type=int, default=10)
     seeds.add_argument("--format", "-f", choices=["table", "json", "md"], default="table")
     seeds.set_defaults(func=cmd_seeds)
+
+    doctor = sub.add_parser("doctor", help="check that this install can run scans")
+    doctor.add_argument("--format", "-f", choices=["table", "json"], default="table")
+    doctor.add_argument("--no-cache", action="store_true")
+    doctor.add_argument("--offline", action="store_true")
+    doctor.set_defaults(func=cmd_doctor)
 
     login = sub.add_parser("login", help="store a Baidu Index cookie")
     login.add_argument("--baidu-cookie", default="", help="the cookie string copied from index.baidu.com")
