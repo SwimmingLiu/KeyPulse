@@ -81,7 +81,9 @@ def run_checks(settings: Settings) -> list[dict]:
             ok, reason = available()
         except Exception as exc:  # noqa: BLE001
             ok, reason = False, f"{type(exc).__name__}: {exc}"
-        checks.append(_line(ok, "browser_bridge", reason if ok else f"不可用：{reason}"))
+        # Informational: the bridge improves data quality, never correctness,
+        # so its absence must not read as a failing check.
+        checks.append(_line(True, "browser_bridge", "ok" if ok else f"不可用（可选）：{reason}"))
     else:
         checks.append(_line(True, "browser_bridge", "已禁用 (KEYPULSE_BROWSER=off)"))
 

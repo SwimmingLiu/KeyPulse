@@ -1109,3 +1109,16 @@ class DoctorTests(unittest.TestCase):
 
         ok_args = SimpleNamespace(format="json", no_cache=False, offline=False)
         self.assertEqual(cmd_doctor(ok_args), 0)
+
+
+class DoctorPlatformTests(unittest.TestCase):
+    def test_browser_bridge_absence_is_informational(self):
+        """CI has no opencli; that must not read as a failing check."""
+        from keypulse import doctor
+
+        original = doctor.run_checks
+        checks = doctor.run_checks(settings(cache_dir=Path("/tmp/keypulse-doc-plat")))
+        bridge = next(c for c in checks if c["label"] == "browser_bridge")
+        # Regardless of whether opencli is present, the check is informational.
+        self.assertTrue(bridge["ok"], bridge["detail"])
+        self.assertIs(original, doctor.run_checks)

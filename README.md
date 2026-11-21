@@ -112,6 +112,7 @@ keypulse expand     # list autocomplete suggestions without measuring
 keypulse seeds      # derive seed keywords from a scenario description
 keypulse login      # store a Baidu Index cookie (enables 百度指数)
 keypulse providers  # which sources are available right now
+keypulse doctor     # self-check: is this install able to run scans?
 ```
 
 ### Enabling 百度指数
@@ -233,6 +234,25 @@ unavailable rather than inventing a number. Disable it with
 |---|---|---|
 | browser bridge | `opencli` + connected browser | 百度指数, Google Trends, 微信文章数 |
 | plain HTTP | network access (proxy for Trends) | autocomplete, Wikipedia, Bing, GitHub |
+
+## Verifying a change
+
+`.claude/skills/verify-keypulse/` is a project-local verification skill: it
+drives the real CLI the way a user does and captures command, exit code and
+output as evidence. Start with its feature map
+(`features/README.md`), then run a recipe.
+
+```bash
+./bin/keypulse doctor                        # is this install usable?
+.claude/skills/verify-keypulse/scripts/smoke.sh   # prove the whole skill works
+```
+
+The smoke script runs doctor, three feature recipes and a deliberate failure
+path, then checks the evidence survived cleanup. It runs in CI on every push.
+
+Recipes are isolated: each gets its own scratch directory and cache, seeded with
+the replay recording, so a verification run never depends on Baidu or Google
+answering and never touches your `~/.cache/keypulse`.
 
 ## Evaluation
 
