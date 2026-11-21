@@ -1,0 +1,15 @@
+{
+  "name": "keypulse-marketplace",
+  "owner": {
+    "name": "SwimmingLiu",
+    "url": "https://github.com/SwimmingLiu"
+  },
+  "description": "KeyPulse — keyword index research for SEO and GEO.",
+  "plugins": [
+    {
+      "name": "keypulse",
+      "source": "./",
+      "description": "Query keyword indexes across search engines, discover keywords from a scenario, and rank the highest-weight opportunities."
+    }
+  ]
+}

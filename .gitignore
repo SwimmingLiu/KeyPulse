@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+.DS_Store
+# Local scan artifacts
+report.json
+
+# Eval artifacts
+evals/results/
+.kp-cache/
+.keypulse.json

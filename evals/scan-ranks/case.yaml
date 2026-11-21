@@ -1,0 +1,6 @@
+schema_version: "1.1"
+name: scan-ranks
+execution:
+  max_turns: 20
+context:
+  scaffold_script: fixture.sh
