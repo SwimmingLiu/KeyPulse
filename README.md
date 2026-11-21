@@ -218,6 +218,8 @@ uses [opencli](https://www.npmjs.com/package/opencli)'s browser bridge when it i
   that answers 429 to `urllib` answers 200 from the page.
 - **百度指数** is read by driving the search box on `index.baidu.com` and
   reading the 搜索指数概览 table (the JSON API is blocked even in-browser).
+  Words Baidu does not index are reported as `未收录` with a zero — that is
+  Baidu's own answer, so it counts as data rather than a lookup failure.
 - **微信文章数** is read from Sogou's WeChat vertical, which serves an
   anti-spider page to plain HTTP but renders normally in a browser.
 

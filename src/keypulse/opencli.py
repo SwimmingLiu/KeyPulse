@@ -67,22 +67,34 @@ def available() -> tuple[bool, str]:
 
 
 def eval_js(settings: Settings, script: str, *, session: str = SESSION, timeout: float | None = None) -> Any:
-    """Evaluate JavaScript in the bridged browser and return parsed JSON."""
+    """Evaluate JavaScript in the bridged browser and return parsed JSON.
+
+    Callers that batch several keywords should pass an explicit ``timeout``:
+    the script waits up to 20s per keyword for its page to render, so a fixed
+    deadline would kill the call while it is still making progress.
+    """
     binary = shutil.which("opencli")
     if not binary:
         raise OpenCliError("opencli 未安装")
-    timeout = timeout or max(30.0, settings.timeout * 4)
+    if timeout is None:
+        timeout = max(60.0, settings.timeout * 4)
     # One eval at a time: opencli serialises per session anyway, and this keeps
     # parallel workers from racing on a half-loaded page.
     with _lock:
-        proc = subprocess.run(
-            [binary, "browser", "eval", "--session", session, script],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
+        try:
+            proc = subprocess.run(
+                [binary, "browser", "eval", "--session", session, script],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired as exc:
+            # Never surface the command line: it contains the whole script.
+            raise OpenCliError(
+                f"opencli 浏览器调用超时（{timeout:.0f}s）：页面未在预算内返回"
+            ) from exc
     if proc.returncode != 0:
-        raise OpenCliError(proc.stderr.strip()[:300] or f"opencli exited {proc.returncode}")
+        raise OpenCliError(_clean_stderr(proc.stderr) or f"opencli exited {proc.returncode}")
     try:
         envelope = json.loads(proc.stdout)
     except ValueError as exc:
@@ -93,18 +105,30 @@ def eval_js(settings: Settings, script: str, *, session: str = SESSION, timeout:
     return envelope.get("data")
 
 
+def _clean_stderr(stderr: str) -> str:
+    """First meaningful stderr line, without echoing any command arguments."""
+    for line in (stderr or "").splitlines():
+        line = line.strip()
+        if line and not line.startswith(("Command", "[", "+")):
+            return line[:200]
+    return ""
+
+
 def open_page(settings: Settings, url: str, *, session: str = SESSION) -> None:
     """Navigate the session's tab so relative fetches resolve on that origin."""
     binary = shutil.which("opencli")
     if not binary:
         raise OpenCliError("opencli 未安装")
     with _lock:
-        proc = subprocess.run(
-            [binary, "browser", "open", "--session", session, url],
-            capture_output=True,
-            text=True,
-            timeout=max(30.0, settings.timeout * 4),
-        )
+        try:
+            proc = subprocess.run(
+                [binary, "browser", "open", "--session", session, url],
+                capture_output=True,
+                text=True,
+                timeout=max(30.0, settings.timeout * 4),
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise OpenCliError("opencli 打开页面超时") from exc
     if proc.returncode != 0:
         raise OpenCliError(proc.stderr.strip()[:300] or f"opencli exited {proc.returncode}")
 

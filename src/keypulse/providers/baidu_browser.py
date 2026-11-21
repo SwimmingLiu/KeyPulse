@@ -101,6 +101,26 @@ class BaiduIndexBrowser(Provider):
         results: list[Signal] = []
         for keyword in keywords:
             outcome = outcomes.get(keyword) or {"error": "no result"}
+            if outcome.get("unindexed"):
+                # Baidu itself says the word is not indexed. That is data, not
+                # an error: report a zero with the reason attached so the
+                # report can distinguish it from "we failed to look".
+                results.append(
+                    Signal(
+                        keyword=keyword,
+                        provider=self.name,
+                        metric=self.metric,
+                        value=0.0,
+                        unit=self.unit,
+                        region=normalise_region(region),
+                        detail={
+                            "unindexed": True,
+                            "note": "百度指数未收录该词（可在百度指数后台创建后查询）",
+                            "transport": "opencli",
+                        },
+                    )
+                )
+                continue
             if "error" in outcome:
                 results.append(self._failure(keyword, str(outcome["error"]), region))
                 continue
@@ -154,11 +174,15 @@ BATCH_SCRIPT = r"""
       send.click();
       const esc = kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const rowRe = new RegExp(esc + '\\s+([\\d,]+)\\s+([\\d,]+)\\s+(-?\\d+)%');
+      const unindexed = new RegExp(esc + '\\s*未被收录');
       const deadline = Date.now() + 20000;
       let done = false;
       while (Date.now() < deadline) {
         const text = (document.body.innerText || '').replace(/\s+/g, ' ');
         if (/异常访问|安全验证/.test(text)) { out[kw] = { error: 'blocked by Baidu anti-bot' }; done = true; break; }
+        if (unindexed.test(text) && !/概览/.test(text)) {
+          out[kw] = { unindexed: true }; done = true; break;
+        }
         const m = text.match(rowRe);
         if (m) {
           out[kw] = { overall: num(m[1]), mobile: num(m[2]), yoy: m[3] + '%' };
@@ -186,7 +210,10 @@ def read_many(settings, keywords: list[str], region: str = "CN") -> dict:
     script = BATCH_SCRIPT.replace("__KEYWORDS__", json.dumps(keywords, ensure_ascii=False))
     try:
         bridge.open_page(settings, INDEX_URL, session=SESSION)
-        payload = bridge.eval_js(settings, script, session=SESSION)
+        # The batch waits up to 20s per keyword for its table to render; give
+        # the browser call room for all of them plus navigation overhead.
+        budget = 30.0 + 25.0 * max(1, len(keywords))
+        payload = bridge.eval_js(settings, script, session=SESSION, timeout=budget)
         data = json.loads(payload) if isinstance(payload, str) else payload
         return data if isinstance(data, dict) else {}
     except Exception as exc:  # noqa: BLE001 - bridge problems degrade to failures

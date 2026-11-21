@@ -6,6 +6,7 @@ Run with:  python3 -m unittest discover -s tests -v
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 import unittest
 from pathlib import Path
@@ -987,3 +988,88 @@ class ConfigFileTests(unittest.TestCase):
             self.assertTrue(_as_bool(truthy))
         for falsy in (False, "0", "", "off", None):
             self.assertFalse(_as_bool(falsy))
+
+
+class BrowserFailureReportingTests(unittest.TestCase):
+    """Problems found by running against the real sites."""
+
+    def test_timeout_reports_without_echoing_the_script(self):
+        from types import SimpleNamespace
+
+        from keypulse import opencli
+
+        original_which, original_run = opencli.shutil.which, opencli.subprocess.run
+        opencli.shutil.which = lambda _name: "/usr/bin/opencli"
+
+        def boom(*args, **kwargs):
+            raise subprocess.TimeoutExpired(cmd=["opencli", "browser", "eval", "SECRET_JS"], timeout=60)
+
+        opencli.subprocess.run = boom
+        try:
+            with self.assertRaises(opencli.OpenCliError) as ctx:
+                opencli.eval_js(settings(), "SECRET_JS", timeout=5)
+        finally:
+            opencli.shutil.which, opencli.subprocess.run = original_which, original_run
+        message = str(ctx.exception)
+        self.assertIn("超时", message)
+        self.assertNotIn("SECRET_JS", message)
+
+    def test_stderr_cleaner_drops_command_echo(self):
+        from keypulse.opencli import _clean_stderr
+
+        noisy = "Command ['opencli', 'browser', 'eval', 'LONG_SCRIPT'] failed\nreal error: no session"
+        self.assertEqual(_clean_stderr(noisy), "real error: no session")
+        self.assertEqual(_clean_stderr(""), "")
+
+    def test_unindexed_keyword_is_a_zero_not_an_error(self):
+        from keypulse.providers import baidu_browser
+
+        provider = baidu_browser.BaiduIndexBrowser(settings())
+        original = baidu_browser.bridge.open_page, baidu_browser.bridge.eval_js
+        baidu_browser.bridge.open_page = lambda *a, **k: None
+        baidu_browser.bridge.eval_js = lambda *a, **k: '{"电商卖家": {"unindexed": true}}'
+        try:
+            sig = provider.signals(["电商卖家"], "CN")[0]
+        finally:
+            baidu_browser.bridge.open_page, baidu_browser.bridge.eval_js = original
+        self.assertTrue(sig.ok)
+        self.assertEqual(sig.value, 0.0)
+        self.assertTrue(sig.detail["unindexed"])
+        self.assertIn("未收录", sig.detail["note"])
+
+    def test_batch_timeout_scales_with_keyword_count(self):
+        from keypulse.providers import baidu_browser
+
+        provider = baidu_browser.BaiduIndexBrowser(settings())
+        seen = {}
+        original = baidu_browser.bridge.open_page, baidu_browser.bridge.eval_js
+
+        def record_timeout(*args, **kwargs):
+            seen["timeout"] = kwargs.get("timeout")
+            return '{"a": {"overall": 1.0, "mobile": 1.0, "yoy": "0%"}}'
+
+        baidu_browser.bridge.open_page = lambda *a, **k: None
+        baidu_browser.bridge.eval_js = record_timeout
+        try:
+            provider.signals(["a", "b", "c", "d"], "CN")
+        finally:
+            baidu_browser.bridge.open_page, baidu_browser.bridge.eval_js = original
+        self.assertGreaterEqual(seen["timeout"], 30 + 25 * 4)
+
+    def test_unindexed_keywords_are_listed_in_the_report(self):
+        from keypulse.models import Signal
+        from keypulse.render import _unindexed
+        from keypulse.scan import ScanRequest, ScanResult
+
+        result = ScanResult(
+            request=ScanRequest(),
+            keywords=["a", "b"],
+            scored=[],
+            signals=[
+                Signal(keyword="a", provider="baidu_index", metric="index", value=0.0,
+                       detail={"unindexed": True}),
+                Signal(keyword="b", provider="baidu_index", metric="index", value=5.0),
+                Signal.failure("c", "baidu_index", "index", "timeout"),
+            ],
+        )
+        self.assertEqual(_unindexed(result), ["a"])

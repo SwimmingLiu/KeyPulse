@@ -78,6 +78,11 @@ def render_table(result: ScanResult, top: int | None = None) -> str:
         output.append("未启用来源:")
         for name, note in sorted(unavailable.items()):
             output.append(f"  - {name}: {note}")
+    unindexed = _unindexed(result)
+    if unindexed:
+        output.append(f"未收录: {len(unindexed)} 个关键词在百度指数中未收录"
+                      "（按 0 计入分数，非查询失败）")
+
     failures = result.signal_failures
     if failures:
         output.append("查询失败来源:")
@@ -142,6 +147,12 @@ def render_markdown(result: ScanResult, top: int | None = None) -> str:
         lines.append("**未启用来源**")
         for name, note in sorted(unavailable.items()):
             lines.append(f"- `{name}`: {note}")
+    unindexed = _unindexed(result)
+    if unindexed:
+        lines.append("")
+        lines.append(
+            f"**未收录**: {'、'.join(unindexed)} 在百度指数中未收录（按 0 计入，非查询失败）"
+        )
     failures = result.signal_failures
     if failures:
         lines.append("")
@@ -192,6 +203,17 @@ def render_leaders(scored: list[ScoredKeyword], top: int) -> str:
         if components:
             lines.append(f"    {components}")
     return "\n".join(lines)
+
+
+def _unindexed(result) -> list[str]:
+    """Keywords a provider explicitly reported as not indexed."""
+    return sorted(
+        {
+            signal.keyword
+            for signal in result.signals
+            if signal.ok and signal.detail.get("unindexed")
+        }
+    )
 
 
 def _top_sources(record: ScoredKeyword) -> str:
