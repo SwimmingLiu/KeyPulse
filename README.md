@@ -272,8 +272,10 @@ recording is genuine data captured once with
 
 The `skill-only` case answers a question the model could otherwise guess at:
 without the plugin a run may answer from general knowledge; the graders require
-the response to defer to KeyPulse (regex) and to avoid asserting a concrete
-index number (LLM judge). All four cases score **1.00** with the plugin.
+the `- 我会：` line to name KeyPulse and the `- 我不会：` line to refuse
+fabrication (both regexes, scored across the trace so a correct answer still
+counts after further exploration). All four cases score **1.00** with the
+plugin.
 
 ```bash
 # one case, offline, cheap
@@ -288,7 +290,14 @@ python evals/fixtures/verify_recording.py
 
 CI runs unit tests and manifest validation on every push
 (`.github/workflows/tests.yml`) and the eval suite on a schedule or on demand
-(`.github/workflows/evals.yml`, needs `ANTHROPIC_API_KEY`).
+(`.github/workflows/evals.yml`). The eval job needs an `ANTHROPIC_API_KEY`
+repository secret; if it is missing the job **fails** with the command to add
+it, so a green check always means the suite really ran:
+
+```bash
+gh secret set ANTHROPIC_API_KEY -R SwimmingLiu/KeyPulse
+gh workflow run evals.yml
+```
 
 ## Notes on the data sources
 

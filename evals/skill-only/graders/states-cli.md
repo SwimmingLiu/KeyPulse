@@ -1,7 +1,12 @@
 ---
 type: regex
-pattern: '(KeyPulse|keypulse)[^\n]{0,20}(skill|技能|CLI|命令)|(import|invoke)[^\n]{0,20}(KeyPulse|keypulse)'
+pattern: '我会[^"\n]{0,8}[：:][^"\n]{0,140}(keypulse|KeyPulse)'
 flags: i
+target: trace
 ---
-The answer must reference KeyPulse (or its CLI/skill) as the thing that would do
-the measuring, rather than answering from general knowledge.
+The agent's own answer (the `- 我会：` line) must name KeyPulse as the thing
+that does the measuring, rather than answering from general knowledge.
+
+Anchored to that line so a tool call that happens to contain "keypulse scan"
+cannot pass it, and scored across the trace so an agent that answers correctly
+and then keeps working still gets credit for the answer.

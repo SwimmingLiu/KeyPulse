@@ -2,8 +2,10 @@ name: evals
 
 # Runs the plugin eval suite (`claude plugin eval`). These are real model calls,
 # so the job is opt-in: on a schedule, or by manual dispatch. It needs an API
-# credential in the ANTHROPIC_API_KEY repository secret; without it the job
-# reports success with a notice instead of failing.
+# credential in the ANTHROPIC_API_KEY repository secret.
+#
+# A missing secret FAILS this job instead of reporting success. A green run here
+# means the suite actually executed; "nothing ran" must never look like a pass.
 on:
   workflow_dispatch:
   schedule:
@@ -17,40 +19,32 @@ jobs:
     env:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
     steps:
-      - name: Check for API key
-        id: key
+      - name: Require ANTHROPIC_API_KEY
         run: |
-          if [ -n "$ANTHROPIC_API_KEY" ]; then
-            echo "present=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "present=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::ANTHROPIC_API_KEY is not set; skipping evals."
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "::error::ANTHROPIC_API_KEY is not set. Add it with:"
+            echo "::error::  gh secret set ANTHROPIC_API_KEY -R $GITHUB_REPOSITORY"
+            exit 1
           fi
 
       - uses: actions/checkout@v4
-        if: steps.key.outputs.present == 'true'
 
       - uses: actions/setup-python@v5
-        if: steps.key.outputs.present == 'true'
         with:
           python-version: "3.12"
 
       - name: Install Claude Code
-        if: steps.key.outputs.present == 'true'
         run: npm install -g @anthropic-ai/claude-code
 
       - name: Validate plugin
-        if: steps.key.outputs.present == 'true'
         run: claude plugin validate . --strict
 
       - name: Check replay recordings
-        if: steps.key.outputs.present == 'true'
         # Cases replay recorded provider values, so the suite needs no network
         # and no browser. This asserts each case still ships a usable recording.
         run: python evals/fixtures/verify_recording.py
 
       - name: Run eval suite
-        if: steps.key.outputs.present == 'true'
         # Bash is needed for the CLI; Skill must be granted or the agent cannot
         # load the plugin skill in this sandbox. 0.8 lets one grader miss.
         run: |
@@ -58,11 +52,12 @@ jobs:
             --trust-plugin --no-publish --scaffold \
             --allow-tools Bash Read Grep Glob Skill \
             --ablation none --runs 1 --threshold 0.8 \
+            --judge-model claude-haiku-4-5 \
             --json evals/results/aggregate.json \
             --output-dir evals/results
 
       - name: Upload eval report
-        if: always() && steps.key.outputs.present == 'true'
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: eval-results
