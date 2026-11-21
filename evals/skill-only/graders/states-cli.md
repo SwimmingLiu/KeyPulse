@@ -1,5 +1,7 @@
 ---
 type: regex
-pattern: '(keypulse|CLI|命令行|命令)[^\n]{0,30}(运行|执行|跑|scan|providers)'
+pattern: '(KeyPulse|keypulse)[^\n]{0,20}(skill|技能|CLI|命令)|(import|invoke)[^\n]{0,20}(KeyPulse|keypulse)'
+flags: i
 ---
-The answer must name the KeyPulse CLI as the thing that would do the measuring.
+The answer must reference KeyPulse (or its CLI/skill) as the thing that would do
+the measuring, rather than answering from general knowledge.

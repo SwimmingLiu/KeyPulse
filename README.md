@@ -241,21 +241,24 @@ The plugin ships an eval suite (`claude plugin eval .`) with four cases:
 | `scenario-seeds` | a scenario becomes whole keyword phrases, not n-gram fragments |
 | `scan-ranks` | the agent runs the CLI and reports the higher-weight keyword |
 | `providers-honesty` | unavailable sources are reported as unavailable, never as zero |
-| `skill-only` | without shell access, the agent still commits to running the CLI |
+| `skill-only` | the answer defers to the CLI and asserts no invented index number |
 
 The eval sandbox has no network, so cases replay recorded provider values
 (`evals/*/recording.json`) through the same offline cache the CLI uses. The
 recording is genuine data captured once with
 `python evals/fixtures/record_cache.py --keywords 人工智能 量子计算 猫粮`.
 
-The `skill-only` case runs with and without the plugin: the skill lifts its
-score from **0.50 to 1.00** (Δ +0.50).
+The `skill-only` case answers a question the model could otherwise guess at:
+without the plugin a run may answer from general knowledge; the graders require
+the response to defer to KeyPulse (regex) and to avoid asserting a concrete
+index number (LLM judge). All four cases score **1.00** with the plugin.
 
 ```bash
 # one case, offline, cheap
 claude plugin eval . --trust-plugin --no-publish --scaffold \
   --case scan-ranks --runs 1 --ablation none \
-  --allow-tools Bash Read Grep Glob Skill --threshold 0.8
+  --allow-tools Bash Read Grep Glob Skill --threshold 0.8 \
+  --judge-model claude-haiku-4-5
 
 # verify every case has a usable recording (used in CI)
 python evals/fixtures/verify_recording.py
