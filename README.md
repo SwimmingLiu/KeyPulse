@@ -290,12 +290,17 @@ python evals/fixtures/verify_recording.py
 
 CI runs unit tests and manifest validation on every push
 (`.github/workflows/tests.yml`) and the eval suite on a schedule or on demand
-(`.github/workflows/evals.yml`). The eval job needs an `ANTHROPIC_API_KEY`
-repository secret; if it is missing the job **fails** with the command to add
-it, so a green check always means the suite really ran:
+(`.github/workflows/evals.yml`). The eval job needs one credential as a
+repository secret — either `ANTHROPIC_API_KEY` (paid API key) or
+`CLAUDE_CODE_OAUTH_TOKEN` (a subscription token from `claude setup-token`). If
+neither is set the job **fails** with the command to add one, so a green check
+always means the suite really ran:
 
 ```bash
-gh secret set ANTHROPIC_API_KEY -R SwimmingLiu/KeyPulse
+# subscription instead of a paid key
+claude setup-token
+gh secret set CLAUDE_CODE_OAUTH_TOKEN -R SwimmingLiu/KeyPulse
+
 gh workflow run evals.yml
 ```
 

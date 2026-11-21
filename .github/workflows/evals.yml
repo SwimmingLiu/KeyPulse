@@ -1,11 +1,15 @@
 name: evals
 
 # Runs the plugin eval suite (`claude plugin eval`). These are real model calls,
-# so the job is opt-in: on a schedule, or by manual dispatch. It needs an API
-# credential in the ANTHROPIC_API_KEY repository secret.
+# so the job is opt-in: on a schedule, or by manual dispatch.
 #
-# A missing secret FAILS this job instead of reporting success. A green run here
-# means the suite actually executed; "nothing ran" must never look like a pass.
+# Either credential works, as a repository secret:
+#   ANTHROPIC_API_KEY        a paid API key
+#   CLAUDE_CODE_OAUTH_TOKEN  a Claude subscription token from `claude setup-token`
+#
+# A missing credential FAILS this job instead of reporting success. A green run
+# here means the suite actually executed; "nothing ran" must never look like a
+# pass.
 on:
   workflow_dispatch:
   schedule:
@@ -18,14 +22,17 @@ jobs:
     timeout-minutes: 30
     env:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
     steps:
-      - name: Require ANTHROPIC_API_KEY
+      - name: Require a credential
         run: |
-          if [ -z "$ANTHROPIC_API_KEY" ]; then
-            echo "::error::ANTHROPIC_API_KEY is not set. Add it with:"
-            echo "::error::  gh secret set ANTHROPIC_API_KEY -R $GITHUB_REPOSITORY"
-            exit 1
+          if [ -n "$ANTHROPIC_API_KEY" ] || [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
+            exit 0
           fi
+          echo "::error::No eval credential is configured. Add one of:"
+          echo "::error::  gh secret set ANTHROPIC_API_KEY -R $GITHUB_REPOSITORY"
+          echo "::error::  gh secret set CLAUDE_CODE_OAUTH_TOKEN -R $GITHUB_REPOSITORY  # from: claude setup-token"
+          exit 1
 
       - uses: actions/checkout@v4
 
