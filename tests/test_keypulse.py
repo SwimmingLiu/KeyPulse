@@ -744,14 +744,18 @@ class ProxyTests(unittest.TestCase):
         proxies = next(h for h in opener.handlers if isinstance(h, urllib.request.ProxyHandler))
         self.assertEqual(proxies.proxies.get("https"), "http://127.0.0.1:9")
 
-    def test_empty_proxy_leaves_proxy_config_to_the_environment(self):
-        # urllib always installs a ProxyHandler; what matters is that we do not
-        # inject our own mapping when KEYPULSE_PROXY is unset.
+    def test_empty_proxy_does_not_inject_our_mapping(self):
+        # Whether urllib installs a ProxyHandler at all depends on the platform
+        # and on *_proxy env vars (absent on CI runners), so only assert that we
+        # never inject KEYPULSE's proxy when it is unset.
         from keypulse import http
 
         opener = http._opener(settings(proxy=""))
-        proxies = next(h for h in opener.handlers if isinstance(h, urllib.request.ProxyHandler))
-        self.assertNotEqual(proxies.proxies.get("https"), "http://127.0.0.1:9")
+        proxies = [
+            h for h in opener.handlers if isinstance(h, urllib.request.ProxyHandler)
+        ]
+        for handler in proxies:
+            self.assertNotEqual(handler.proxies.get("https"), "http://127.0.0.1:9")
 
     def test_unreachable_proxy_is_a_fetch_error(self):
         from keypulse import http
