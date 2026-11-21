@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "keypulse"
+version = "0.1.0"
+description = "Keyword demand research across Baidu Index, Google Trends, WeChat/Sogou and others."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "GPL-3.0-or-later" }
+authors = [{ name = "SwimmingLiu" }]
+keywords = ["seo", "geo", "keyword-research", "baidu-index", "google-trends"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+    "Environment :: Console",
+]
+# Runtime is standard-library only; no dependencies on purpose.
+dependencies = []
+
+[project.scripts]
+keypulse = "keypulse.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/SwimmingLiu/KeyPulse"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]

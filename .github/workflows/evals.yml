@@ -1,0 +1,52 @@
+name: evals
+
+# Runs the plugin eval suite (`claude plugin eval`). These are real model calls,
+# so the job is opt-in: on a schedule, or manually. It needs an API credential
+# in the ANTHROPIC_API_KEY repository secret.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 3 * * 1"   # Mondays 03:00 UTC
+
+jobs:
+  evals:
+    name: plugin evals
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Validate plugin
+        run: claude plugin validate . --strict
+
+      - name: Regenerate replay fixtures from the recording
+        # The eval cases replay recorded provider values, so no network or
+        # browser is needed. This step only asserts the recording is readable.
+        run: python evals/fixtures/verify_recording.py
+
+      - name: Run eval suite
+        # Bash is needed for the CLI; Skill must be granted or the agent cannot
+        # load the plugin skill in this sandbox. 0.8 lets one grader miss.
+        run: |
+          claude plugin eval . \
+            --trust-plugin --no-publish --scaffold \
+            --allow-tools Bash Read Grep Glob Skill \
+            --ablation none --runs 1 --threshold 0.8 \
+            --json evals/results/aggregate.json \
+            --output-dir evals/results
+
+      - name: Upload eval report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-results
+          path: evals/results
+          if-no-files-found: warn

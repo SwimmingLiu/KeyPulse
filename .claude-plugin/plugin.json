@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "keypulse",
+  "description": "Keyword demand research across Baidu Index, Google Trends, WeChat/Sogou and other sources — recommends keywords from a scenario, queries their indexes, and ranks the highest-weight ones.",
+  "version": "0.1.0",
+  "author": {
+    "name": "SwimmingLiu",
+    "url": "https://github.com/SwimmingLiu"
+  },
+  "homepage": "https://github.com/SwimmingLiu/KeyPulse",
+  "repository": "https://github.com/SwimmingLiu/KeyPulse",
+  "license": "GPL-3.0",
+  "keywords": ["seo", "geo", "keyword-research", "baidu-index", "google-trends", "wechat-index"]
+}

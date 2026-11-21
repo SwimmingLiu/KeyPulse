@@ -1,0 +1,75 @@
+{
+  "region": "CN",
+  "keywords": {
+    "人工智能": {
+      "baidu_index": {
+        "metric": "index",
+        "value": 1728.0,
+        "unit": "raw",
+        "detail": {
+          "mobile": 886,
+          "yoy": "-48%",
+          "window": "近 30 天日均",
+          "transport": "opencli"
+        }
+      },
+      "google_trends": {
+        "metric": "interest",
+        "value": 47.3,
+        "unit": "scaled_0_100",
+        "detail": {
+          "points": 53,
+          "window": "today 12-m",
+          "transport": "opencli"
+        }
+      }
+    },
+    "量子计算": {
+      "baidu_index": {
+        "metric": "index",
+        "value": 201.0,
+        "unit": "raw",
+        "detail": {
+          "mobile": 105,
+          "yoy": "-52%",
+          "window": "近 30 天日均",
+          "transport": "opencli"
+        }
+      },
+      "google_trends": {
+        "metric": "interest",
+        "value": 42.9,
+        "unit": "scaled_0_100",
+        "detail": {
+          "points": 53,
+          "window": "today 12-m",
+          "transport": "opencli"
+        }
+      }
+    },
+    "猫粮": {
+      "baidu_index": {
+        "metric": "index",
+        "value": 672.0,
+        "unit": "raw",
+        "detail": {
+          "mobile": 598,
+          "yoy": "-7%",
+          "window": "近 30 天日均",
+          "transport": "opencli"
+        }
+      },
+      "google_trends": {
+        "metric": "interest",
+        "value": 11.2,
+        "unit": "scaled_0_100",
+        "detail": {
+          "points": 53,
+          "window": "today 12-m",
+          "transport": "opencli"
+        }
+      }
+    }
+  },
+  "captured_at": "2026-11-21T09:20:33-08:00"
+}
