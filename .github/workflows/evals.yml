@@ -47,6 +47,17 @@ jobs:
       - name: Install Claude Code
         run: npm install -g @anthropic-ai/claude-code
 
+      - name: Install sandbox dependencies
+        # `claude plugin eval` grants Bash only through a confined shell. On
+        # Linux that confinement needs bubblewrap + socat; without them every
+        # run is refused before it starts (0 turns, score 0). The ubuntu-latest
+        # image ships bwrap but not socat.
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends bubblewrap socat
+          socat -V | head -1
+          bwrap --version
+
       - name: Validate plugin
         run: claude plugin validate . --strict
 
