@@ -270,6 +270,12 @@ The eval sandbox has no network, so cases replay recorded provider values
 recording is genuine data captured once with
 `python evals/fixtures/record_cache.py --keywords 人工智能 量子计算 猫粮`.
 
+Each case's `fixture.sh` also drops a `./keypulse` wrapper into the sandbox
+workspace that points at this checkout's `bin/keypulse`. The agent's Bash tool
+does **not** get `$CLAUDE_PLUGIN_ROOT` in the eval sandbox, so a prompt that
+told it to run `"$CLAUDE_PLUGIN_ROOT/bin/keypulse"` would expand to
+`/bin/keypulse` and fail; `./keypulse` works the same on every platform.
+
 The `skill-only` case answers a question the model could otherwise guess at:
 without the plugin a run may answer from general knowledge; the graders require
 the `- 我会：` line to name KeyPulse and the `- 我不会：` line to refuse

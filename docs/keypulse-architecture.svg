@@ -1,0 +1,197 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1680" height="1092" viewBox="0 0 1680 1092" role="img" aria-labelledby="title description">
+  <title id="title">KeyPulse 架构</title>
+  <desc id="description">Claude Code 插件和终端进入同一个 Python CLI。扫描准备关键词，按指数层或代理层调用 Provider，将 Signal 归一化后排名，再用 ScanResult 输出报告。图中还包括 Provider 注册、HTTP 与浏览器访问、离线回放和 CI。</desc>
+  <defs>
+    <style>
+      text { font-family: "PingFang SC", "Noto Sans CJK SC", "Microsoft YaHei", system-ui, sans-serif; fill: #10243a; }
+      .title { font-size: 36px; font-weight: 700; letter-spacing: -.4px; }
+      .subtitle { font-size: 18px; fill: #42566a; }
+      .section { font-size: 20px; font-weight: 700; }
+      .heading { font-size: 19px; font-weight: 650; }
+      .detail { font-size: 15px; fill: #3c5267; }
+      .code { font-family: ui-monospace, "SF Mono", Menlo, Consolas, "PingFang SC", monospace; font-size: 14px; fill: #3c5267; }
+      .edge-label { font-size: 14px; fill: #415973; }
+      .fallback-label { font-size: 15px; fill: #85441e; }
+      .panel { fill: #fff; stroke: #d7e1ea; }
+      .card { fill: #f8fafc; stroke: #d7e1ea; }
+      .main { fill: #eef5ff; stroke: #c6d8ef; }
+      .data { fill: #f1f8f7; stroke: #cae0dc; }
+      .rail { fill: none; stroke: #566f8d; stroke-width: 2; marker-end: url(#arrow); stroke-linejoin: round; }
+      .call { stroke-dasharray: 5 5; }
+      .fallback { stroke: #a86131; marker-end: url(#arrow-fallback); }
+    </style>
+    <marker id="arrow" viewBox="0 0 10 10" markerWidth="5" markerHeight="5" refX="9" refY="5" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 Z" fill="#566f8d"/>
+    </marker>
+    <marker id="arrow-fallback" viewBox="0 0 10 10" markerWidth="5" markerHeight="5" refX="9" refY="5" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 Z" fill="#a86131"/>
+    </marker>
+  </defs>
+
+  <rect width="1680" height="1092" fill="#f3f6fa"/>
+  <text class="title" x="32" y="52">KeyPulse 架构</text>
+  <text class="subtitle" x="33" y="78">Claude Code 插件与 Python CLI 共用关键词测量流程</text>
+  <text class="code" x="1648" y="53" text-anchor="end">main / d489cdd</text>
+
+  <g aria-label="命令入口">
+    <rect class="panel" x="30" y="102" width="1620" height="166" rx="14"/>
+    <text class="section" x="52" y="132">命令入口</text>
+
+    <rect class="card" x="52" y="145" width="314" height="45" rx="9"/>
+    <text class="heading" x="68" y="174">终端 / 脚本</text>
+    <text class="code" x="348" y="173" text-anchor="end">keypulse</text>
+
+    <rect class="card" x="52" y="199" width="314" height="52" rx="9"/>
+    <text class="heading" x="68" y="220">Claude Code 插件</text>
+    <text class="detail" x="68" y="240">Skill / slash commands · 选词与解释</text>
+
+    <rect class="main" x="417" y="157" width="320" height="79" rx="10"/>
+    <text class="heading" x="435" y="182">cli.main() · argparse</text>
+    <text class="code" x="435" y="204">pyproject.toml / bin/keypulse</text>
+    <text class="detail" x="435" y="224">解析参数并分发子命令</text>
+
+    <rect class="card" x="790" y="145" width="470" height="106" rx="10"/>
+    <text class="heading" x="807" y="171">辅助命令</text>
+    <text class="code" x="807" y="194">seeds / expand</text>
+    <text class="detail" x="969" y="194">规则提词 / 自动补全</text>
+    <text class="code" x="807" y="215">providers / doctor</text>
+    <text class="detail" x="969" y="215">可用性 / 安装诊断</text>
+    <text class="code" x="807" y="236">login</text>
+    <text class="detail" x="969" y="236">保存、清除百度 Cookie</text>
+
+    <rect class="card" x="1313" y="145" width="315" height="106" rx="10"/>
+    <text class="heading" x="1330" y="171">Settings · config.py</text>
+    <text class="detail" x="1330" y="194">CLI → 环境变量 → 配置文件 → 默认值</text>
+    <text class="code" x="1330" y="215">.keypulse.json</text>
+    <text class="code" x="1330" y="236">&lt;cache_dir&gt;/credentials.json</text>
+
+    <path class="rail" d="M 366 168 H 417"/>
+    <path class="rail" d="M 366 225 H 417"/>
+    <path class="rail" d="M 737 196 H 790"/>
+    <path class="rail call" d="M 1260 231 H 1313"/>
+  </g>
+
+  <g aria-label="扫描与报告">
+    <rect class="panel" x="30" y="298" width="1620" height="223" rx="14"/>
+    <text class="section" x="52" y="329">扫描与报告</text>
+    <text class="code" x="1628" y="329" text-anchor="end">run_scan(ScanRequest, Settings) → ScanResult</text>
+
+    <rect class="main" x="52" y="357" width="284" height="107" rx="10"/>
+    <text class="heading" x="69" y="382">准备关键词</text>
+    <text class="code" x="69" y="403">ScanRequest · expand.py</text>
+    <text class="detail" x="69" y="425">显式关键词 / 场景提词</text>
+    <text class="detail" x="69" y="446">可选修饰和补全 · 去重 · 截断</text>
+
+    <rect class="main" x="375" y="357" width="284" height="107" rx="10"/>
+    <text class="heading" x="392" y="382">选择扫描层</text>
+    <text class="code" x="392" y="403">scan.py · Registry</text>
+    <text class="detail" x="392" y="425">按层选择来源 · 并发 check()</text>
+    <text class="detail" x="392" y="446">index / fallback，或显式 -p</text>
+
+    <rect class="main" x="698" y="357" width="284" height="107" rx="10"/>
+    <text class="heading" x="715" y="382">并发采集</text>
+    <text class="code" x="715" y="403">_collect_signals() → Signal[]</text>
+    <text class="detail" x="715" y="425">线程池 · Provider × 关键词</text>
+    <text class="detail" x="715" y="446">有浏览器来源时按 Provider 分批</text>
+
+    <rect class="main" x="1021" y="357" width="284" height="107" rx="10"/>
+    <text class="heading" x="1038" y="382">归一化与排名</text>
+    <text class="code" x="1038" y="403">scoring.py · ScoredKeyword</text>
+    <text class="detail" x="1038" y="425">0–100 · 加权均值 · 置信度</text>
+    <text class="detail" x="1038" y="446">机会分 · 单源批内重缩放</text>
+
+    <rect class="main" x="1344" y="357" width="284" height="107" rx="10"/>
+    <text class="heading" x="1361" y="382">输出报告</text>
+    <text class="code" x="1361" y="403">ScanResult · render.py</text>
+    <text class="detail" x="1361" y="425">模式 · 来源状态 · 排名 · 原始信号</text>
+    <text class="detail" x="1361" y="446">表格 / Markdown / JSON · top 精简</text>
+
+    <path class="rail" d="M 577 236 V 282 H 194 V 357"/>
+    <text class="edge-label" x="371" y="276">scan / top</text>
+    <path class="rail" d="M 336 411 H 375"/>
+    <path class="rail" d="M 659 411 H 698"/>
+    <path class="rail" d="M 982 411 H 1021"/>
+    <path class="rail" d="M 1305 411 H 1344"/>
+    <path class="rail call fallback" d="M 1163 357 V 340 H 517 V 357"/>
+    <text class="fallback-label" x="840" y="331" text-anchor="middle">指数层整批无可用评分分量 → 进入代理层</text>
+  </g>
+
+  <g aria-label="数据源与访问方式">
+    <rect class="panel" x="30" y="553" width="1620" height="331" rx="14"/>
+    <text class="section" x="52" y="585">Registry / Provider</text>
+    <text class="detail" x="1628" y="584" text-anchor="end">build_registry() · 14 个 Provider ID</text>
+
+    <rect class="data" x="52" y="608" width="284" height="101" rx="10"/>
+    <text class="heading" x="69" y="634">搜索指数 · index</text>
+    <text class="code" x="69" y="658">baidu_index</text>
+    <text class="code" x="69" y="681">google_trends</text>
+
+    <rect class="data" x="375" y="608" width="284" height="101" rx="10"/>
+    <text class="heading" x="392" y="634">内容量代理 · fallback</text>
+    <text class="code" x="392" y="657">sogou_wechat</text>
+    <text class="code" x="392" y="677">wikipedia_pageviews</text>
+    <text class="code" x="392" y="697">wikipedia_search</text>
+
+    <rect class="data" x="698" y="608" width="284" height="101" rx="10"/>
+    <text class="heading" x="715" y="634">自动补全</text>
+    <text class="detail" x="715" y="657">百度 / Google / Bing / 360 / 搜狗</text>
+    <text class="code" x="715" y="681">suggest() → Suggestion[]</text>
+
+    <rect class="data" x="1021" y="608" width="284" height="101" rx="10"/>
+    <text class="heading" x="1038" y="634">开发者来源</text>
+    <text class="code" x="1038" y="658">github_repos · hn_mentions</text>
+    <text class="detail" x="1038" y="681">显式选源可参与评分</text>
+
+    <rect class="data" x="1344" y="608" width="284" height="101" rx="10"/>
+    <text class="heading" x="1361" y="634">网页结果数</text>
+    <text class="code" x="1361" y="657">bing_web · so360_web</text>
+    <text class="detail" x="1361" y="681">采集到 Bing 时用于竞争度</text>
+
+    <text class="section" x="52" y="745">适配器访问方式</text>
+    <path d="M 235 738 H 1628" stroke="#d7e1ea"/>
+
+    <rect class="card" x="52" y="760" width="498" height="104" rx="10"/>
+    <text class="heading" x="69" y="785">HTTP · http.fetch() → urllib</text>
+    <text class="detail" x="69" y="809">请求上游 API 或 HTML · 磁盘响应缓存与 TTL</text>
+    <text class="detail" x="69" y="832">按主机节流 · 重试与熔断 · 离线仅查响应缓存</text>
+
+    <rect class="card" x="571" y="760" width="519" height="104" rx="10"/>
+    <text class="heading" x="588" y="785">浏览器 · opencli.py → 子进程 → 浏览器会话</text>
+    <text class="detail" x="588" y="809">百度指数 / 搜狗微信在注册时选择浏览器或 HTTP</text>
+    <text class="detail" x="588" y="832">Google Trends 在查询时尝试浏览器，再回退 HTTP</text>
+
+    <rect class="card" x="1111" y="760" width="517" height="104" rx="10"/>
+    <text class="heading" x="1128" y="785">录制数据 · Provider._replay()</text>
+    <text class="code" x="1128" y="809">KEYPULSE_REPLAY / &lt;cache_dir&gt;/replay-*.json</text>
+    <text class="detail" x="1128" y="832">支持回放的适配器命中录制时直接生成 Signal</text>
+  </g>
+
+  <path class="rail call" d="M 194 464 V 535 H 840 V 608"/>
+  <text class="edge-label" x="207" y="497">可选自动补全 · suggest()</text>
+  <path class="rail call" d="M 948 464 V 553"/>
+  <text class="edge-label" x="961" y="497">调用 Provider.signal() / signals()</text>
+  <path class="rail" d="M 1486 464 V 482"/>
+  <text class="edge-label" x="1486" y="503" text-anchor="middle">stdout → 终端或 Claude Code</text>
+
+  <g aria-label="验证与回放">
+    <rect class="panel" x="30" y="912" width="1620" height="150" rx="14"/>
+    <text class="section" x="52" y="942">验证与回放</text>
+
+    <rect class="card" x="52" y="955" width="498" height="88" rx="10"/>
+    <text class="heading" x="69" y="981">tests.yml · push main / PR / 手动</text>
+    <text class="detail" x="69" y="1005">单元测试 · 编译 · 录制校验 · verify-keypulse smoke</text>
+    <text class="detail" x="69" y="1027">Claude 插件与 marketplace 校验</text>
+
+    <rect class="card" x="571" y="955" width="519" height="88" rx="10"/>
+    <text class="heading" x="588" y="981">evals.yml · 定时 / 手动</text>
+    <text class="detail" x="588" y="1005">claude plugin eval · 四个模型评测案例</text>
+    <text class="detail" x="588" y="1027">提词、排名、来源可用性、无工具时的回答</text>
+
+    <rect class="card" x="1111" y="955" width="517" height="88" rx="10"/>
+    <text class="heading" x="1128" y="981">Fixture · 预置离线数据</text>
+    <text class="code" x="1128" y="1005">recording JSON → .keypulse.json + replay-*.json</text>
+    <text class="detail" x="1128" y="1027">smoke / eval 使用同一个真实 CLI</text>
+
+    <path class="rail call" d="M 1369 955 V 864"/>
+  </g>
+</svg>

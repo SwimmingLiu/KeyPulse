@@ -43,3 +43,15 @@ cat > "$WORKSPACE/.keypulse.json" <<JSON
 }
 JSON
 echo "offline replay cache: $CACHE_DIR"
+
+# Provide ./kp in the workspace so the case never has to guess where the plugin
+# lives. $CLAUDE_PLUGIN_ROOT is NOT set for the agent's Bash tool in the eval
+# sandbox, but this script runs as you and can locate its own repo checkout.
+PLUGIN_BIN="$(cd "$(dirname "$0")/../.." && pwd)/bin/keypulse"
+if [ -x "$PLUGIN_BIN" ]; then
+  printf '#!/bin/sh\nexec %s "$@"\n' "$PLUGIN_BIN" > "$WORKSPACE/keypulse"
+  chmod +x "$WORKSPACE/keypulse"
+  echo "cli wrapper: $WORKSPACE/keypulse -> $PLUGIN_BIN"
+else
+  echo "WARNING: plugin CLI not found at $PLUGIN_BIN" >&2
+fi
