@@ -69,6 +69,17 @@ mini-program has not logged in recently: tell the user to open 「微信指数�
 credential-free fallback (screenshots the open window), so a scan still works
 when the token is stale.
 
+To open it yourself (macOS, needs Accessibility):
+
+```
+Discover 面板 → Mini Programs → 最近使用 → 微信指数
+```
+
+The 「微信指数」 icon sits in 最近使用 and the window is titled 微信指数. Once it
+opens, the client calls `weapplogin` and the key is minted — no search needed,
+just opening it refreshes the cache. Verify with
+`python3 scripts/wechat-index/read_token.py --json` (check `key_age_seconds`).
+
 If the user has a Baidu cookie and wants the real 百度指数, tell them once:
 
 ```
