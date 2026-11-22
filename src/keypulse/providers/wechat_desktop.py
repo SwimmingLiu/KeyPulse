@@ -134,9 +134,11 @@ class WeChatDesktopIndex(Provider):
         match = payload.get("match") or {}
         value = match.get("index")
         if value is None:
+            seen = payload.get("seen") or []
+            hint = f"（窗口里现有：{'、'.join(seen[:6])}）" if seen else ""
             return self._failure(
                 keyword,
-                payload.get("note") or "窗口里没有该关键词的行（先在微信指数里搜一次该词）",
+                f"微信指数窗口里没有「{keyword}」{hint}；在微信里打开指数小程序搜一次该词即可",
                 region,
             )
         return Signal(

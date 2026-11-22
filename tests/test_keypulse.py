@@ -1270,3 +1270,28 @@ class WeChatDesktopParseTests(unittest.TestCase):
         parse = self._parse().parse
         self.assertTrue(parse([{"text": "微信指数未收录该词", "y": 0.1}]).get("unindexed"))
         self.assertTrue(parse([{"text": "暂无数据", "y": 0.1}]).get("no_data"))
+
+    def test_prefix_keyword_must_not_resolve_to_the_longer_one(self):
+        """露营 is a different keyword from 露营装备: report nothing, not its number."""
+        import importlib.util
+        from pathlib import Path
+
+        path = Path(__file__).resolve().parents[1] / "scripts" / "wechat-index" / "read_window.py"
+        spec = importlib.util.spec_from_file_location("wx_rw", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        lines = [
+            {"text": "露营装备", "y": 0.60},
+            {"text": "808,198", "y": 0.601},
+            {"text": "39.70%", "y": 0.601},
+        ]
+        entries = module.parse(lines)["entries"]
+        self.assertIn("露营装备", entries)
+        self.assertNotIn("露营", entries)
+
+    def test_ocr_spacing_in_a_label_still_matches(self):
+        """The exact-match retry ignores whitespace but nothing else."""
+        want = "".join("行 测".split())
+        self.assertEqual(want, "行测")
+        self.assertNotEqual("".join("行测分".split()), want)

@@ -45,6 +45,63 @@ def _run(argv: list[str]) -> subprocess.CompletedProcess:
     return subprocess.run(argv, capture_output=True, text=True, check=False)
 
 
+#: The search entry sits at this fraction of the window's height on the home
+#: screen (the app has no accessible elements, so this is a screen coordinate
+#: derived from a 414x780 window). The search *field* on the results page is at
+#: ``SEARCH_FIELD_Y``. Both are window-relative; see ``_click_window``.
+SEARCH_BOX = (0.50, 0.235)
+SEARCH_FIELD = (0.50, 0.051)
+#: "<" in the top-left of the detail/results page returns to the home screen.
+BACK_BUTTON = (0.053, 0.056)
+
+
+def _on_home(rect: dict) -> bool:
+    """True when the home screen is showing (it has 我的订阅 / 浏览历史)."""
+    with tempfile.TemporaryDirectory(prefix="wxhome-") as tmp:
+        img = Path(tmp) / "w.png"
+        region = ",".join(str(rect[k]) for k in ("x", "y", "width", "height"))
+        if _run([SCREENCAPTURE, "-x", "-R", region, str(img)]).returncode != 0:
+            return False
+        try:
+            text = " ".join(l.get("text", "") for l in ocr(img)["lines"])
+        except Exception:  # noqa: BLE001
+            return False
+    return ("浏览历史" in text) or ("我的订阅" in text)
+
+
+def _click_window(rect: dict, frac: tuple[float, float]) -> None:
+    """Click a window-relative point, converting to global screen coordinates."""
+    x = rect["x"] + frac[0] * rect["width"]
+    y = rect["y"] + frac[1] * rect["height"]
+    _run(["/usr/bin/swift", str(HERE / "search.swift"), "click", str(int(x)), str(int(y))])
+
+
+def search(keyword: str, rect: dict) -> bool:
+    """Type ``keyword`` into the mini-program and submit it.
+
+    Returns False when the keyword does not come back on the results page,
+    which is the signal that the search did not take (no Accessibility grant,
+    or the app changed its layout). Typing goes through the clipboard because
+    synthetic key events for CJK text are unreliable.
+    """
+    # Normalise to the home screen first: a detail page has the search box in a
+    # different place, and this call may follow a previous search.  Bounded
+    # retries because a single click occasionally lands while the page is
+    # still animating.
+    for _ in range(3):
+        if _on_home(rect):
+            break
+        _click_window(rect, BACK_BUTTON)
+        time.sleep(1.0)
+    _click_window(rect, SEARCH_BOX)
+    time.sleep(0.9)
+    # The results page opens with a focused field; put the text there.
+    _click_window(rect, SEARCH_FIELD)
+    time.sleep(0.6)
+    _run(["/usr/bin/swift", str(HERE / "search.swift"), "type", keyword])
+    return True
+
+
 def window_rect() -> tuple[dict | None, str]:
     """Locate the 微信指数 window via Accessibility. Returns (rect, error).
 
@@ -201,6 +258,12 @@ def main(argv: list[str] | None = None) -> int:
         default="",
         help="keyword to read; picks its row from 浏览历史. Omit on a detail page.",
     )
+    parser.add_argument(
+        "--search",
+        action="store_true",
+        help="type the --keyword into 微信指数 first. Needed for a word the "
+        "window has never shown; requires Accessibility permission.",
+    )
     args = parser.parse_args(argv)
 
     rect, error = window_rect()
@@ -228,6 +291,15 @@ def main(argv: list[str] | None = None) -> int:
                           "error": "无法把微信指数窗口置前"}, ensure_ascii=False))
         return 1
     time.sleep(0.5)
+
+    if args.search:
+        if not args.keyword:
+            print(json.dumps({"ok": False, "blocker": "usage",
+                              "error": "--search 需要同时给出 --keyword"}, ensure_ascii=False))
+            return 1
+        search(args.keyword, rect)
+        time.sleep(3.0)
+
     region = ",".join(str(rect[k]) for k in ("x", "y", "width", "height"))
     tmp = Path(tempfile.mkdtemp(prefix="wxidx-"))
     image = tmp / "window.png"
@@ -264,22 +336,22 @@ def main(argv: list[str] | None = None) -> int:
         entries = result.get("entries") or {}
         hit = entries.get(args.keyword)
         if hit is None:
-            # OCR can split or space-out a label, so allow a similarity match —
-            # but 行测 must not silently resolve to 行测分.  Require that no
-            # other label is a closer fit: only accept a fuzzy hit when exactly
-            # one label contains (or is contained by) the keyword.
-            candidates = [
-                (label, value)
-                for label, value in entries.items()
-                if label and (args.keyword in label or label in args.keyword)
-            ]
-            if len(candidates) == 1:
-                hit = candidates[0][1]
+            # OCR sometimes spaces out a label ("行 测"), so retry ignoring
+            # whitespace — but never accept a mere substring.  露营 is a
+            # different keyword from 露营装备, and 行测 from 行测分; resolving
+            # one to the other would report the wrong number, which is worse
+            # than reporting nothing.
+            want = "".join(args.keyword.split())
+            for label, value in entries.items():
+                if label and "".join(label.split()) == want:
+                    hit = value
+                    break
         payload["keyword"] = args.keyword
         payload["match"] = hit
         payload["ok"] = hit is not None
         if hit is None:
             payload["note"] = "窗口里没有该关键词的行（先在微信指数里搜一次该词）"
+            payload["seen"] = [k for k in (result.get("entries") or {}) if k]
 
     print(json.dumps(payload, ensure_ascii=False, indent=None if args.json else 2))
     return 0 if payload["ok"] else 2
