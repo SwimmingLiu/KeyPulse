@@ -56,7 +56,7 @@ READ_SCRIPT = r"""
     if (/尚未收录|暂未收录/.test(text)) return JSON.stringify({ unindexed: true });
     if (/关键词搜索指数/.test(text) && /平均值/.test(text)) break;
     if (/请登录|登录后查看/.test(text)) {
-      return JSON.stringify({ error: '需要登录 creator.douyin.com' });
+      return JSON.stringify({ error: '需要登录 creator.douyin.com（在浏览器登录后运行 keypulse login --provider douyin）' });
     }
     await sleep(600);
   }
@@ -110,7 +110,20 @@ class DouyinIndexBrowser(Provider):
         ok, reason = bridge.available()
         if not ok:
             return False, f"需要浏览器桥接：{reason}"
-        return True, "ok (browser bridge)"
+        # Login state is probed by ``keypulse login``; here a cached answer is
+        # enough, and an unconfirmed one is better than claiming a session the
+        # scan will not get.
+        try:
+            from .. import sessions
+
+            state = sessions.recall(self.name, self.settings)
+        except Exception:  # noqa: BLE001
+            state = None
+        if state is not None and state.logged_in is False:
+            return False, f"需要登录 creator.douyin.com（keypulse login --provider douyin）"
+        if state is not None and state.logged_in is True:
+            return True, "ok (browser bridge, 已登录)"
+        return True, "ok (browser bridge; 登录态未确认，可运行 keypulse login)"
 
     def signal(self, keyword: str, region: str = "CN") -> Signal:
         recorded = self._replay(keyword)

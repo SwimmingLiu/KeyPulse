@@ -7,7 +7,7 @@ import Foundation
 import Vision
 import AppKit
 
-struct Line: Codable { let text: String; let confidence: Float; let y: Double }
+struct Line: Codable { let text: String; let confidence: Float; let x: Double; let y: Double }
 
 guard CommandLine.arguments.count > 1 else {
     print(#"{"ok":false,"error":"usage: ocr_image.swift <image>"}"#)
@@ -34,8 +34,11 @@ do { try handler.perform([request]) } catch {
 var lines: [Line] = []
 for observation in request.results ?? [] {
     guard let candidate = observation.topCandidates(1).first else { continue }
+    // x is as important as y here: the caller clicks the box, so it needs
+    // both the horizontal and vertical centre, normalised to the image.
     lines.append(Line(text: candidate.string,
                       confidence: candidate.confidence,
+                      x: Double(observation.boundingBox.midX),
                       y: 1.0 - Double(observation.boundingBox.midY)))
 }
 lines.sort { $0.y < $1.y }

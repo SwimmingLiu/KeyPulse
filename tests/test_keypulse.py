@@ -5,6 +5,7 @@ Run with:  python3 -m unittest discover -s tests -v
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import subprocess
@@ -1679,6 +1680,81 @@ class WeChatLiveCacheTests(unittest.TestCase):
         self.assertIn("2 分钟", fresh)
         self.assertIn("wechat-token", fresh)
 
+    def test_concurrent_reads_share_one_cache_lookup(self):
+        """Four workers must not each sweep 23k cache files.
+
+        The real failure: each call took ~8 s, four ran at once, all four hit
+        the 25 s timeout, ``_newest_cached`` returned ``None``, and the scan
+        fell back to a key that had expired 100 minutes earlier.
+        """
+        import concurrent.futures as cf
+
+        from keypulse.providers import wechat_index_browser as wx
+
+        wx._cache_at, wx._cache_value = 0.0, None
+        calls = []
+        original = wx._run_token_script
+
+        def slow(script):
+            calls.append(1)
+            import time as _time
+
+            _time.sleep(0.15)
+            return ("OID", "KEY", "2026-11-22 05:10:21")
+
+        wx._run_token_script = slow
+        try:
+            with cf.ThreadPoolExecutor(4) as pool:
+                results = list(pool.map(lambda _: wx._newest_cached(), range(4)))
+        finally:
+            wx._run_token_script = original
+            wx._cache_at, wx._cache_value = 0.0, None
+
+        self.assertEqual(len(calls), 1, "the cache must be read once, not per worker")
+        self.assertTrue(all(r == ("OID", "KEY", "2026-11-22 05:10:21") for r in results))
+
+    def test_a_rejected_key_is_retried_once_with_a_fresher_one(self):
+        """The client re-logs in on its own; do not report a dead key it fixed."""
+        from keypulse.http import Response
+        from keypulse.providers import wechat_index_browser as wx
+
+        cfg = settings(
+            cache_dir=Path("/tmp/keypulse-wechat-live"),
+            wechat_openid="OID",
+            wechat_search_key="OLD_KEY",
+        )
+        cfg.wechat_live_cache = False
+        provider = wx.WeChatIndex(cfg)
+
+        original_fetch, original_cached = wx.fetch, wx._newest_cached
+        seen = []
+
+        def fake_fetch(url, settings, **kwargs):
+            import json as _json
+
+            key = _json.loads(kwargs["data"])["search_key"]
+            seen.append(key)
+            if key == "OLD_KEY":
+                return Response(text='{"code":-10000,"msg":"auth failed."}', status=200, url=url)
+            return Response(
+                text='{"code":0,"content":{"resp_list":[{"query":"行测","status":0,'
+                '"indexes":[{"ctype":0,"cvalue":"","time_indexes":'
+                '[{"time":20261121,"score":38464}]}]}]}}',
+                status=200,
+                url=url,
+            )
+
+        wx.fetch = fake_fetch
+        wx._newest_cached = lambda force=False: ("OID", "NEW_KEY", "2026-11-22 06:00:00")
+        try:
+            signal = provider.signal("行测")
+        finally:
+            wx.fetch, wx._newest_cached = original_fetch, original_cached
+
+        self.assertTrue(signal.ok, signal.error)
+        self.assertEqual(signal.value, 38464.0)
+        self.assertEqual(seen, ["OLD_KEY", "NEW_KEY"])
+
 
 class WeChatOpenCommandTests(unittest.TestCase):
     """``keypulse wechat-open`` must report honestly, never claim success."""
@@ -1732,3 +1808,453 @@ class WeChatOpenCommandTests(unittest.TestCase):
             login_mod.open_script = original
             login_mod.subprocess.run = original_run
         self.assertEqual(code, 1)
+
+
+class BrowserCookieTests(unittest.TestCase):
+    """Reading a logged-in session out of the browser's own cookie store.
+
+    The real Chrome format: key from the keychain, AES-128-CBC with a
+    16-space IV, and ``SHA256(host_key)`` prepended to the plaintext.  The
+    test builds that ciphertext itself so the reader is checked against the
+    format rather than against a saved blob.
+    """
+
+    def _encrypt(self, host_key: str, value: str, key: bytes) -> bytes:
+        import subprocess as sp
+
+        plain = hashlib.sha256(host_key.encode()).digest() + value.encode()
+        proc = sp.run(
+            [
+                "/usr/bin/openssl", "enc", "-aes-128-cbc",
+                "-K", key.hex(), "-iv", (b" " * 16).hex(),
+            ],
+            input=plain,
+            capture_output=True,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        return b"v10" + proc.stdout
+
+    def _db(self, rows) -> Path:
+        import sqlite3
+        import tempfile
+
+        directory = Path(tempfile.mkdtemp()) / "Default"
+        directory.mkdir()
+        connection = sqlite3.connect(str(directory / "Cookies"))
+        connection.execute(
+            "create table cookies (host_key text, name text, value text, "
+            "encrypted_value blob, path text, expires_utc integer, "
+            "is_secure integer, is_httponly integer)"
+        )
+        connection.executemany(
+            "insert into cookies values (?,?,?,?,?,?,?,?)", rows
+        )
+        connection.commit()
+        connection.close()
+        return directory
+
+    def _module(self):
+        from keypulse import browser_cookies
+
+        browser_cookies._read_cache.clear()
+        browser_cookies._password_cache.clear()
+        return browser_cookies
+
+    def test_decrypts_a_chrome_cookie(self):
+        module = self._module()
+        key = hashlib.pbkdf2_hmac("sha1", b"pw", b"saltysalt", 1003, 16)
+        import time
+
+        future = int((time.time() + 3600) * 1_000_000) + 11_644_473_600 * 1_000_000
+        profile = self._db(
+            [(".baidu.com", "BDUSS", "", self._encrypt(".baidu.com", "SECRETVALUE", key),
+              "/", future, 1, 1)]
+        )
+        module.BROWSERS["test"] = (str(profile.parent), "Test Safe Storage", "Test")
+        module._keychain_password = lambda service: b"pw"
+        try:
+            cookies = module.read("baidu.com", browser="test")
+        finally:
+            module.BROWSERS.pop("test", None)
+        self.assertEqual([c.name for c in cookies], ["BDUSS"])
+        self.assertEqual(cookies[0].value, "SECRETVALUE")
+        self.assertTrue(cookies[0].http_only)
+
+    def test_expired_cookies_are_not_a_session(self):
+        module = self._module()
+        key = hashlib.pbkdf2_hmac("sha1", b"pw", b"saltysalt", 1003, 16)
+        past = int((1_600_000_000 + 11_644_473_600) * 1_000_000)  # long gone
+        profile = self._db(
+            [(".baidu.com", "BDUSS", "", self._encrypt(".baidu.com", "DEAD", key),
+              "/", past, 1, 1)]
+        )
+        module.BROWSERS["test"] = (str(profile.parent), "Test Safe Storage", "Test")
+        module._keychain_password = lambda service: b"pw"
+        try:
+            cookies = module.read("baidu.com", browser="test")
+        finally:
+            module.BROWSERS.pop("test", None)
+        self.assertEqual(cookies, [])
+
+    def test_a_wrong_host_hash_is_rejected(self):
+        """A decrypt that does not verify must not become a credential."""
+        module = self._module()
+        key = hashlib.pbkdf2_hmac("sha1", b"pw", b"saltysalt", 1003, 16)
+        import time
+
+        future = int((time.time() + 3600) * 1_000_000) + 11_644_473_600 * 1_000_000
+        # Encrypted for one host, stored under another.
+        blob = self._encrypt(".evil.com", "WRONG", key)
+        profile = self._db(
+            [(".baidu.com", "BDUSS", "", blob, "/", future, 1, 1)]
+        )
+        module.BROWSERS["test"] = (str(profile.parent), "Test Safe Storage", "Test")
+        module._keychain_password = lambda service: b"pw"
+        try:
+            cookies = module.read("baidu.com", browser="test")
+        finally:
+            module.BROWSERS.pop("test", None)
+        self.assertEqual(cookies, [])
+
+    def test_header_puts_the_most_specific_domain_first(self):
+        from keypulse.browser_cookies import Cookie, header
+
+        value = header([
+            Cookie("A", "1", ".baidu.com", "/", True, False, None),
+            Cookie("B", "2", "index.baidu.com", "/", True, False, None),
+        ])
+        self.assertEqual(value, "B=2; A=1")
+
+    def test_find_reports_only_the_names_asked_for(self):
+        from keypulse.browser_cookies import Cookie, find
+
+        cookies = [
+            Cookie("BDUSS", "x", ".baidu.com", "/", True, True, None),
+            Cookie("other", "y", ".baidu.com", "/", True, False, None),
+        ]
+        self.assertEqual(find(cookies, ("BDUSS", "STOKEN")), {"BDUSS": "x"})
+
+
+class SessionDetectionTests(unittest.TestCase):
+    """`keypulse login` must say 已登录 only when a scan would get a session."""
+
+    def _sessions(self):
+        from keypulse import sessions
+
+        return sessions
+
+    def test_aliases_resolve_to_the_right_providers(self):
+        sessions = self._sessions()
+        self.assertEqual(
+            [t.provider for t in sessions.targets_for(["baidu", "抖音"])],
+            ["baidu_index", "douyin_index"],
+        )
+        self.assertEqual(len(sessions.targets_for(["all"])), 3)
+
+    def test_a_browser_source_is_not_logged_in_just_because_a_cookie_exists(self):
+        """抖音/小红书 keep a www cookie after the creator/RED session is gone."""
+        sessions = self._sessions()
+        target = next(t for t in sessions.TARGETS if t.provider == "douyin_index")
+        original = sessions._probe
+        sessions._probe = lambda settings, t: (None, "探测失败")
+        try:
+            state = sessions.detect(settings(), target, probe=True)
+        finally:
+            sessions._probe = original
+        self.assertIsNone(state.logged_in)
+        self.assertIn("未确认", state.detail)
+
+    def test_a_cookie_source_is_logged_in_when_the_browser_is(self):
+        sessions = self._sessions()
+        target = next(t for t in sessions.TARGETS if t.provider == "baidu_index")
+        original = sessions._probe
+        sessions._probe = lambda settings, t: (True, "浏览器里已登录")
+        try:
+            state = sessions.detect(settings(), target, probe=True)
+        finally:
+            sessions._probe = original
+        self.assertTrue(state.logged_in)
+        self.assertEqual(state.how, "browser")
+
+    def test_stored_cookie_wins_without_touching_the_browser(self):
+        sessions = self._sessions()
+        target = next(t for t in sessions.TARGETS if t.provider == "baidu_index")
+
+        def boom(settings, t):
+            raise AssertionError("must not probe when a cookie is stored")
+
+        original = sessions._probe
+        sessions._probe = boom
+        try:
+            state = sessions.detect(settings(baidu_cookie="BDUSS=abc; STOKEN=def"), target)
+        finally:
+            sessions._probe = original
+        self.assertTrue(state.logged_in)
+        self.assertEqual(state.how, "stored")
+
+    def test_wechat_state_reports_a_stale_key_as_unusable(self):
+        import time as _time
+
+        sessions = self._sessions()
+        from keypulse.providers import wechat_index_browser as wx
+
+        original = wx._newest_cached
+        wx._newest_cached = lambda force=False: None
+        try:
+            old = f"{int(_time.time()) - 45 * 60}123_9"
+            state = sessions.wechat_state(settings(wechat_search_key=old))
+        finally:
+            wx._newest_cached = original
+        self.assertFalse(state.logged_in)
+        self.assertIn("45", state.detail)
+
+    def test_states_are_remembered_and_recalled(self):
+        sessions = self._sessions()
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = settings(cache_dir=Path(tmp))
+            state = sessions.State(
+                provider="baidu_index", label="百度指数", url="u",
+                kind="cookie", logged_in=True, detail="ok", how="browser",
+            )
+            sessions.remember(cfg, [state])
+            recalled = sessions.recall("baidu_index", cfg)
+            self.assertIsNotNone(recalled)
+            self.assertTrue(recalled.logged_in)
+
+
+class LoginHubTests(unittest.TestCase):
+    """The command prints a reminder rather than inventing a credential."""
+
+    def test_status_json_lists_every_login_source(self):
+        import io
+        from contextlib import redirect_stdout
+
+        from keypulse import login as login_mod
+        from keypulse import sessions
+
+        original = sessions.detect_all
+        sessions.detect_all = lambda settings, probe=True: [
+            sessions.State("baidu_index", "百度指数", "u1", "cookie", True, "ok"),
+            sessions.State("douyin_index", "抖音指数", "u2", "browser", False, "需要登录"),
+            sessions.State("xiaohongshu_notes", "小红书", "u3", "browser", True, "ok"),
+            sessions.State("wechat_index", "微信指数", "u4", "client", True, "ok"),
+        ]
+        buffer = io.StringIO()
+        original_settings = login_mod.Settings
+        login_mod.Settings = lambda: settings(cache_dir=Path("/tmp/keypulse-hub"))
+        try:
+            with redirect_stdout(buffer):
+                code = login_mod.cmd_login(SimpleNamespace(json=True, baidu_cookie="", provider="", clear=False))
+        finally:
+            sessions.detect_all = original
+            login_mod.Settings = original_settings
+        self.assertEqual(code, 0)
+        payload = json.loads(buffer.getvalue())
+        self.assertEqual({row["provider"] for row in payload},
+                         {"baidu_index", "douyin_index", "xiaohongshu_notes", "wechat_index"})
+
+    def test_browser_only_sources_are_not_imported_as_cookies(self):
+        from keypulse import sessions
+
+        target = next(t for t in sessions.TARGETS if t.provider == "xiaohongshu_notes")
+        ok, detail = sessions.import_cookie(settings(cache_dir=Path("/tmp/keypulse-hub")), target)
+        self.assertFalse(ok)
+        self.assertIn("只能在浏览器里使用", detail)
+
+
+class BaiduCDPTests(unittest.TestCase):
+    """百度指数 over the DevTools protocol: no opencli, no extension."""
+
+    def test_websocket_frames_round_trip(self):
+        """The RFC 6455 client is hand-rolled; prove masking and framing."""
+        import socket as _socket
+        import threading
+
+        from keypulse.cdp import WebSocket
+
+        server = _socket.socket()
+        server.bind(("127.0.0.1", 0))
+        server.listen(1)
+        port = server.getsockname()[1]
+        received: list[str] = []
+
+        def serve():
+            connection, _ = server.accept()
+            request = b""
+            while b"\r\n\r\n" not in request:
+                request += connection.recv(4096)
+            key = ""
+            for line in request.decode("latin-1").split("\r\n"):
+                if line.lower().startswith("sec-websocket-key:"):
+                    key = line.split(":", 1)[1].strip()
+            accept = base64.b64encode(
+                hashlib.sha1(
+                    (key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()
+                ).digest()
+            ).decode()
+            connection.sendall(
+                (
+                    "HTTP/1.1 101 Switching Protocols\r\n"
+                    "Upgrade: websocket\r\nConnection: Upgrade\r\n"
+                    f"Sec-WebSocket-Accept: {accept}\r\n\r\n"
+                ).encode()
+            )
+            header = connection.recv(2)
+            length = header[1] & 0x7F
+            mask = connection.recv(4)
+            payload = connection.recv(length)
+            received.append(
+                bytes(b ^ mask[i % 4] for i, b in enumerate(payload)).decode()
+            )
+            body = json.dumps({"id": 1, "result": {"ok": True}}).encode()
+            connection.sendall(bytes([0x81, len(body)]) + body)
+            connection.close()
+
+        thread = threading.Thread(target=serve, daemon=True)
+        thread.start()
+        ws = WebSocket(f"ws://127.0.0.1:{port}/devtools/page/X", timeout=10)
+        ws.send_text('{"id":1}')
+        reply = json.loads(ws.receive())
+        ws.close()
+        server.close()
+        thread.join(timeout=5)
+        self.assertEqual(received, ['{"id":1}'])
+        self.assertTrue(reply["result"]["ok"])
+
+    def test_handshake_without_upgrade_is_rejected(self):
+        import socket as _socket
+
+        from keypulse.cdp import CDPError, WebSocket
+
+        server = _socket.socket()
+        server.bind(("127.0.0.1", 0))
+        server.listen(1)
+        port = server.getsockname()[1]
+
+        def serve():
+            connection, _ = server.accept()
+            connection.recv(4096)
+            connection.sendall(b"HTTP/1.1 404 Not Found\r\n\r\n")
+            connection.close()
+
+        import threading
+
+        thread = threading.Thread(target=serve, daemon=True)
+        thread.start()
+        with self.assertRaises(CDPError):
+            WebSocket(f"ws://127.0.0.1:{port}/x", timeout=5)
+        server.close()
+        thread.join(timeout=5)
+
+    def test_a_rejected_row_is_reported_not_scored(self):
+        """A login wall or a block must be an error, never a zero."""
+        from keypulse.providers import baidu_cdp
+
+        cfg = settings(cache_dir=Path("/tmp/keypulse-cdp-test"))
+        provider = baidu_cdp.BaiduIndexCDP(cfg)
+
+        class FakeBrowser:
+            def set_cookies(self, _cookies):
+                return 1
+
+            def navigate(self, _url):
+                pass
+
+            def evaluate(self, _script, **_kwargs):
+                return json.dumps({"error": "blocked by Baidu anti-bot"})
+
+            def close(self):
+                pass
+
+        original_session = baidu_cdp.cdp.session
+        original_read = baidu_cdp.browser_cookies.read
+        baidu_cdp.cdp.session = lambda: FakeBrowser()
+        baidu_cdp.browser_cookies.read = lambda domain, **_k: [
+            SimpleNamespace(
+                name="BDUSS", value="x", domain=".baidu.com", path="/",
+                secure=True, http_only=True, expires_at=None,
+            )
+        ]
+        try:
+            results = provider.signals(["猫粮"])
+        finally:
+            baidu_cdp.cdp.session = original_session
+            baidu_cdp.browser_cookies.read = original_read
+        self.assertEqual(len(results), 1)
+        self.assertFalse(results[0].ok)
+        self.assertIn("blocked", results[0].error)
+
+    def test_an_unindexed_word_is_data_not_a_failure(self):
+        from keypulse.providers import baidu_cdp
+
+        cfg = settings(cache_dir=Path("/tmp/keypulse-cdp-test"))
+        provider = baidu_cdp.BaiduIndexCDP(cfg)
+
+        class FakeBrowser:
+            def set_cookies(self, _cookies):
+                return 1
+
+            def navigate(self, _url):
+                pass
+
+            def evaluate(self, _script, **_kwargs):
+                return json.dumps({"unindexed": True})
+
+            def close(self):
+                pass
+
+        original_session = baidu_cdp.cdp.session
+        original_read = baidu_cdp.browser_cookies.read
+        baidu_cdp.cdp.session = lambda: FakeBrowser()
+        baidu_cdp.browser_cookies.read = lambda domain, **_k: [
+            SimpleNamespace(
+                name="BDUSS", value="x", domain=".baidu.com", path="/",
+                secure=True, http_only=True, expires_at=None,
+            )
+        ]
+        try:
+            results = provider.signals(["不存在的词"])
+        finally:
+            baidu_cdp.cdp.session = original_session
+            baidu_cdp.browser_cookies.read = original_read
+        self.assertTrue(results[0].ok)
+        self.assertEqual(results[0].value, 0.0)
+        self.assertTrue(results[0].detail.get("unindexed"))
+
+    def test_provider_name_matches_the_other_baidu_transports(self):
+        """--provider baidu_index, the index tier and the weights key off it."""
+        from keypulse.providers import baidu, baidu_browser, baidu_cdp
+
+        self.assertEqual(baidu_cdp.BaiduIndexCDP.name, baidu.BaiduIndex.name)
+        self.assertEqual(baidu_cdp.BaiduIndexCDP.name, baidu_browser.BaiduIndexBrowser.name)
+
+    def test_the_local_browser_is_preferred_over_the_bridge(self):
+        """CDP needs no extension and is ~7x faster; it comes first."""
+        import keypulse.cdp as cdp
+        import keypulse.opencli as bridge
+        from keypulse.providers import _baidu_chain
+
+        original_cdp, original_bridge = cdp.available, bridge.available
+        cdp.available = lambda: (True, "ok (chrome)")
+        bridge.available = lambda: (True, "ok")
+        try:
+            picked = _baidu_chain(settings())
+        finally:
+            cdp.available, bridge.available = original_cdp, original_bridge
+        self.assertEqual(picked.__name__, "BaiduIndexCDP")
+
+    def test_a_cookie_only_machine_still_falls_back(self):
+        import keypulse.cdp as cdp
+        import keypulse.opencli as bridge
+        from keypulse.providers import _baidu_chain
+
+        original_cdp, original_bridge = cdp.available, bridge.available
+        cdp.available = lambda: (False, "no chrome")
+        bridge.available = lambda: (False, "no opencli")
+        try:
+            picked = _baidu_chain(settings())
+        finally:
+            cdp.available, bridge.available = original_cdp, original_bridge
+        self.assertEqual(picked.__name__, "BaiduIndex")

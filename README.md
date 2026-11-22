@@ -37,12 +37,12 @@ misleading you: proxy numbers are never labelled as an index.
 ### Index first, proxies only as a fallback
 
 Four sources measure search demand directly, and all four need a logged-in
-browser (the `opencli` bridge) — except 微信指数, whose credentials are read
-from the WeChat client itself:
+browser — except 微信指数, whose credentials are read from the WeChat client
+itself:
 
 | Source | Needs | What it reads |
 |---|---|---|
-| 百度指数 `baidu_index` | browser bridge, or a logged-in cookie | 搜索指数概览, 近 30 天日均 |
+| 百度指数 `baidu_index` | local Chrome (default), or the `opencli` bridge | 搜索指数概览, 近 30 天日均 |
 | Google Trends `google_trends` | browser bridge, or a clean IP | 0–100 interest mean |
 | 抖音指数 `douyin_index` | browser bridge, logged in to creator.douyin.com | 关键词搜索指数 平均值 |
 | 微信指数 `wechat_index` | `keypulse wechat-open` + `wechat-token` (macOS) | 当日搜索指数 |
@@ -50,6 +50,79 @@ from the WeChat client itself:
 
 抖音 is enabled by logging in to the creator centre in the browser the bridge
 drives — it is free with a normal account.
+
+### 百度指数 needs a browser, not a cookie
+
+Baidu answers `status 10018` (异常访问) to its JSON API from a script, from a
+cookie-carrying request, **and** from a `fetch` issued inside the page. Only
+the page's own XHR passes, so a real browser has to render the real UI.
+
+`baidu_index` therefore drives one, and prefers the browser already on the
+machine over the `opencli` bridge:
+
+| Order | Transport | Needs |
+|---|---|---|
+| 1 | `baidu_cdp.py` — Chrome-family browser over the DevTools protocol | nothing but the browser; cookies decrypted from its own store |
+| 2 | `baidu_browser.py` — the `opencli` bridge | `opencli` + connected extension |
+| 3 | `baidu.py` — plain HTTP with a cookie | a cookie (usually blocked by 10018) |
+
+The CDP route launches Chrome headless with `--remote-debugging-port` on a
+private profile under `<cache>/chrome-cdp`, injects the cookies via
+`Network.setCookies`, and navigates straight to `#/trend/<word>`. It is the
+fastest of the three by a wide margin — **3.9 s for four keywords** against
+13.6 s through the bridge — because the page is already logged in and each
+keyword is one hash navigation.
+
+Two details that took measurement to find:
+
+- Navigate to the trend URL; do **not** type into the search box. Typing fires
+  an in-app route change that destroys the JS execution context mid-call
+  (`Inspected target navigated or closed`).
+- Loopback debug endpoints must bypass `*_proxy`. With a system proxy set,
+  `urllib` sends `127.0.0.1` through it and the connection comes back 502.
+
+The DevTools client is a small hand-rolled RFC 6455 implementation on
+`socket` — the project has no third-party dependencies and this keeps it that
+way.
+
+### Which sources need a login
+
+`keypulse login` is the one place that answers this. It probes every gated
+source and says, per source, whether you are logged in and what to do next:
+
+```
+数据源   状态     说明
+百度指数  ✓ 已登录  浏览器里已登录
+抖音指数  ✗ 未登录  浏览器里显示登录页
+小红书   ✓ 已登录  浏览器里已登录
+微信指数  ✓ 已登录  search_key 已签发 5 分钟
+
+需要登录的来源：
+  抖音指数: 打开 https://creator.douyin.com/... 登录，然后重跑 keypulse login --provider douyin
+```
+
+There are two kinds of gate, and pretending otherwise is how a "logged in"
+report turns into an empty scan:
+
+* **Storable** — 百度指数's session is a cookie, so `keypulse login --provider
+  baidu` lifts it out of the browser and keeps it (`<cache>/credentials.json`,
+  mode 0600). The CDP transport re-injects that cookie into the browser it
+  drives; the plain-HTTP transport sends it directly (and usually gets 10018).
+* **Browser-only** — 抖音指数 and 小红书 sign their APIs per page load, so
+  there is no credential to copy. What matters is that the browser the bridge
+  drives stays logged in. KeyPulse probes that page and reports it instead of
+  claiming a session it cannot get.
+
+`--open` puts the login page in front of you in that same browser. For
+微信指数 the credential comes from the WeChat client, not a browser:
+`keypulse login --provider wechat` opens the mini-program and reads the key it
+mints, falling back to a client restart only if you pass `--restart-client`
+(that closes the app).
+
+The cookie reader (`src/keypulse/browser_cookies.py`) handles the real Chrome
+format on macOS: key from the login keychain, AES-128-CBC with a 16-space IV,
+and `SHA256(host_key)` prepended to the plaintext — a hash that must match the
+row's host before the value is trusted.
 
 **微信指数 has no web endpoint** (`index.weixin.qq.com` is NXDOMAIN); the index
 lives behind the mini-program's own CGI. KeyPulse speaks that protocol
@@ -59,10 +132,16 @@ directly — it was recovered by unpacking `__APP__.wxapkg`:
 POST https://search.weixin.qq.com/cgi-bin/wxaweb/wxindex
 X-Request-Sign: md5(search_key + query.join(""))
 {"openid": …, "search_key": …, "cgi_name": "GetDefaultIndex",
- "query": ["关键词"], "compound_word": [], "start_ymd": …, "end_ymd": …, "is_beta": 1}
+ "query": ["关键词"], "compound_word": [], "start_ymd": "20261023",
+ "end_ymd": "20261122", "is_beta": 1}
 → {"code": 0, "content": {"resp_list": [{"query": …, "indexes": [
      {"time_indexes": [{"time": 20261121, "score": 3551726}, …]}]}]}}
 ```
+
+`start_ymd`/`end_ymd` are `YYYYMMDD` **strings**. Sending them as integers is
+accepted by the JSON parser and then fails server-side with `code -10004`
+("process failed") — a message-posting bug, not a credential problem, and the
+first thing to check if a working key starts answering `-10004`.
 
 Only the credential is fragile. `search_key` is minted by the WeChat client's
 `weapplogin` and lasts about **30 minutes** (measured: minted 22:51, still
@@ -75,10 +154,22 @@ keypulse wechat-token      # reads openid + search_key out of WeChat's own
 keypulse scan ...          # now
 ```
 
+Opening the mini-program is all `wechat-open` needs to do, because the client
+renews the key by itself: the mini-program's `cgi/cgi.js` treats `code -10000`
+as "the server says my session expired", calls `wx.login` + `weapplogin`, and
+retries — so a launch after an expiry mints a fresh key without anyone
+logging in. It only skips that path when `third_session` is already in its
+storage, which is why a *reopen* can yield nothing while a launch after an
+expiry always does.
+
 The scan also re-reads WeChat's cache on every call and prefers a newer key
-there, so a stale saved copy cannot mask a fresh one. When the key really has
+there, so a stale saved copy cannot mask a fresh one. That read is memoised
+briefly and serialised: the cache holds ~23k files, and four parallel workers
+each sweeping it timed out and fell back to an expired key — which looked
+exactly like "the key I just minted does not work". When a key really has
 expired the scan says 凭据失效, reports the key's age, and names the command —
-rather than retrying a dead key. If you prefer not to read the cache,
+and if the client minted a newer key meanwhile it retries once with that one
+rather than reporting a dead credential. If you prefer not to read the cache,
 `KEYPULSE_WECHAT_OPENID` / `KEYPULSE_WECHAT_SEARCH_KEY` work as an override.
 
 `wechat-open` does the reliable part (focus WeChat, put 微信指数 in its search
@@ -164,7 +255,7 @@ keypulse scan       # query indexes for keywords and rank them
 keypulse top        # leaders only
 keypulse expand     # list autocomplete suggestions without measuring
 keypulse seeds      # derive seed keywords from a scenario description
-keypulse login      # store a Baidu Index cookie (enables 百度指数)
+keypulse login      # which sources need a login, and fetch the credential
 keypulse providers  # which sources are available right now
 keypulse doctor     # self-check: is this install able to run scans?
 ```
@@ -172,17 +263,25 @@ keypulse doctor     # self-check: is this install able to run scans?
 ### Enabling 百度指数
 
 The simplest path is the browser bridge above — 百度指数 is then read from the
-logged-in page with no configuration. Without a browser, the JSON API works
-with a logged-in cookie:
+logged-in page with no configuration. To keep the credential for the plain
+HTTP path, import it from the browser:
 
 ```bash
-# prints step-by-step instructions, or saves the cookie you paste
+keypulse login --provider baidu      # reads BDUSS etc. out of the browser
+keypulse providers -r CN             # verify it now shows ✓
+```
+
+If you would rather paste it by hand:
+
+```bash
 keypulse login --baidu-cookie "BDUSS=...; STOKEN=..."
-keypulse providers -r CN     # verify it now shows ✓
 ```
 
 The cookie is stored at `<cache>/credentials.json` with mode `0600`; the
 `KEYPULSE_BAIDU_COOKIE` environment variable takes precedence when both are set.
+Baidu's anti-bot layer (`status 10018`) can still reject the plain API even
+with a valid cookie — that is why the browser provider is preferred whenever
+the bridge is up.
 
 Common flows:
 
@@ -243,7 +342,7 @@ The full algorithm and its calibration notes are in
 ## Development
 
 ```bash
-python3 -m unittest discover -s tests -v    # 89 tests, no network required
+python3 -m unittest discover -s tests -v    # 145 tests, no network required
 python evals/fixtures/verify_recording.py   # eval fixtures are usable
 claude plugin validate .                    # manifest + component checks
 ```
@@ -258,6 +357,10 @@ src/keypulse/     implementation
   expand.py       scenario → seeds, seed → candidates
   scoring.py      normalisation, weighting, ranking
   scan.py         orchestration
+  login.py        credential setup + the login-status hub
+  sessions.py     who is logged in, and which gate each source has
+  browser_cookies.py  decrypt a Chromium cookie store (macOS keychain)
+  cdp.py          drive a local Chrome over the DevTools protocol
 skills/keypulse/  the agent-facing skill + playbook
 commands/         /keypulse:keywords, /keypulse:providers
 tests/            offline unit tests
@@ -267,16 +370,22 @@ evals/            plugin eval suite (cases, graders, replay recordings)
 
 ## Browser bridge (opencli)
 
-Google Trends and 百度指数 gate their APIs by IP and session. From a real
-browser they work; from a script they return 429 / 异常访问. KeyPulse therefore
-uses [opencli](https://www.npmjs.com/package/opencli)'s browser bridge when it is available:
+Google Trends, 抖音指数 and 百度指数 gate their APIs by IP and session. From a
+real browser they work; from a script they return 429 / 异常访问. KeyPulse has
+three browser transports and picks the best available one:
+
+| Transport | Needs | Used for |
+|---|---|---|
+| local browser (CDP) | Chrome/Chromium/Brave/Edge/Vivaldi | 百度指数 (preferred) |
+| [opencli](https://www.npmjs.com/package/opencli) bridge | `opencli` + connected extension | Google Trends, 抖音指数, 小红书, 微信文章数, 百度指数 (fallback) |
+| plain HTTP | network access (proxy for Trends) | autocomplete, Wikipedia, Bing, GitHub |
 
 - **Google Trends** is fetched from inside a browser tab — the same endpoint
   that answers 429 to `urllib` answers 200 from the page.
-- **百度指数** is read by driving the search box on `index.baidu.com` and
-  reading the 搜索指数概览 table (the JSON API is blocked even in-browser).
-  Words Baidu does not index are reported as `未收录` with a zero — that is
-  Baidu's own answer, so it counts as data rather than a lookup failure.
+- **百度指数** is read by rendering `index.baidu.com` and reading the
+  搜索指数概览 table (the JSON API is blocked even in-browser). Words Baidu
+  does not index are reported as `未收录` with a zero — that is Baidu's own
+  answer, so it counts as data rather than a lookup failure.
 - **微信文章数** is read from Sogou's WeChat vertical, which serves an
   anti-spider page to plain HTTP but renders normally in a browser.
 
@@ -285,11 +394,6 @@ browser extension is connected (`opencli doctor`), it is used automatically.
 Otherwise KeyPulse falls back to plain HTTP and reports the source as
 unavailable rather than inventing a number. Disable it with
 `KEYPULSE_BROWSER=off`.
-
-| Transport | Needs | Typical sources |
-|---|---|---|
-| browser bridge | `opencli` + connected browser | 百度指数, Google Trends, 微信文章数 |
-| plain HTTP | network access (proxy for Trends) | autocomplete, Wikipedia, Bing, GitHub |
 
 ## Verifying a change
 
@@ -382,7 +486,7 @@ unset ANTHROPIC_API_KEY
   the WeChat client by `keypulse wechat-token`. Sogou's WeChat article count
   (`sogou_wechat`) remains available as a public fallback when that is not set.
   Sogou throttles by IP — if it shows "触发反爬验证", the scan continues without it.
-- The `search_key` that 微信指数 accepts expires in roughly an hour or two. Do
+- The `search_key` that 微信指数 accepts expires in roughly 30 minutes. Do
   not cache a rejection: an expired key must fail loudly with the refresh
   command, never silently become a zero.
 - 百度指数 requires a logged-in cookie. KeyPulse implements the published `ptbk`

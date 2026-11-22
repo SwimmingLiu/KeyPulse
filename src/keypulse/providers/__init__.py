@@ -10,6 +10,7 @@ from ..config import Settings
 from .backup import GitHubRepos, HackerNewsMentions, WikipediaPageviews, WikipediaSearch
 from .baidu import BaiduIndex, BaiduSuggest
 from .baidu_browser import BaiduIndexBrowser
+from .baidu_cdp import BaiduIndexCDP
 from .douyin_browser import DouyinIndexBrowser
 from .wechat_browser import SogouWeChatBrowser
 from .wechat_desktop import WeChatDesktopIndex
@@ -47,7 +48,7 @@ AUDIENCE_PROVIDERS = ("github_repos", "hn_mentions")
 
 def build_registry(settings: Settings) -> Registry:
     providers: list[Provider] = [
-        _prefer_browser(BaiduIndexBrowser, BaiduIndex, settings)(settings),
+        _baidu_chain(settings)(settings),
         GoogleTrends(settings),
         BaiduSuggest(settings),
         GoogleSuggest(settings),
@@ -95,6 +96,37 @@ def _prefer_browser(browser_cls, http_cls, settings: Settings):
     if ok or os.environ.get("KEYPULSE_REPLAY"):
         return browser_cls
     return http_cls
+
+
+def _baidu_chain(settings: Settings) -> type:
+    """百度指数: local browser over CDP → opencli bridge → plain HTTP cookie.
+
+    Baidu's JSON API answers ``status 10018`` to everything that is not the
+    page's own XHR, so the cookie-only path is the last resort rather than
+    the first.
+
+    The CDP provider comes first because it needs no external tool and no
+    browser extension — just the Chrome-family browser already installed —
+    and it is much faster (one navigation per keyword against a page that is
+    already logged in, ~0.5 s, versus ~7 s through the bridge).  opencli
+    stays as the next step for machines where launching a browser is blocked.
+    """
+    import os
+
+    from .. import cdp
+
+    replay = bool(os.environ.get("KEYPULSE_REPLAY"))
+    if replay:
+        return BaiduIndexBrowser
+    if settings.offline:
+        return BaiduIndex
+    if cdp.available()[0]:
+        return BaiduIndexCDP
+    from ..opencli import available
+
+    if available()[0]:
+        return BaiduIndexBrowser
+    return BaiduIndex
 
 
 def registry_without(settings: Settings, excluded: set[str]) -> Registry:

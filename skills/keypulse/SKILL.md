@@ -50,11 +50,29 @@ Read the result and set expectations in one short sentence before continuing:
 
 | What you see | What it means | What to say |
 |---|---|---|
-| `baidu_index` ✗ "需要 KEYPULSE_BAIDU_COOKIE" | No Baidu Index session | 百度指数需要 Cookie；可用 `keypulse login` 配置，或先看其他来源 |
+| `baidu_index` ✗ "需要 KEYPULSE_BAIDU_COOKIE" | No Baidu Index session | 百度指数需要登录；`keypulse login --provider baidu` 可从浏览器导入 Cookie |
+| `baidu_index` ✗ "浏览器没有登录 index.baidu.com" | The local browser has no Baidu session | 让用户在浏览器登录 index.baidu.com，再 `keypulse login --provider baidu` |
+| `baidu_index` ✗ "blocked by Baidu anti-bot" | Baidu served 异常访问 | 百度风控；降低频率后重试，不要当成没数据 |
 | `google_trends` ✗ "HTTP 429" | This IP is rate-limited | Google Trends 当前被限流；改用其他来源或稍后重试 |
+| `douyin_index` ✗ "需要登录 creator.douyin.com" | The bridge browser is not logged in to the creator centre | 抖音指数需要在浏览器里登录；先说清楚，不要编数字 |
+| `xiaohongshu_notes` ✗ "需要登录 www.xiaohongshu.com" | The bridge browser is not logged in to RED | 小红书需要在浏览器里登录 |
 | `wechat_index` ✗ "需要 openid + search_key" | No 微信指数 credential yet | 微信指数要一条命令刷新凭据（见下） |
 | `wechat_index` ✗ 凭据失效 | The `search_key` aged out (~30 min, measured) | 先 `keypulse wechat-open` 打开小程序，再 `keypulse wechat-token`，然后重扫 |
 | All ✓ | Real indexes available | 直接用指数排序 |
+
+`keypulse login` (no flags) probes every login-gated source and prints, per
+source, 已登录 / 未登录 plus the URL to log in at; `--json` gives the same as
+data. Use it instead of guessing from a failed scan.
+
+Two kinds of gate — do not conflate them:
+
+* **Storable**: 百度指数 takes a cookie, so `keypulse login --provider baidu`
+  imports it from the browser and saves it. A saved cookie is evidence of a
+  login, not a promise that Baidu's anti-bot (`status 10018`) will accept the
+  request.
+* **Browser-only**: 抖音指数 and 小红书 sign their APIs per page load. There
+  is nothing to copy; the browser must stay logged in. Never report these as
+  已登录 unless the probe said so.
 
 微信指数 credentials are read from the WeChat client — no proxy, no phone
 capture. The `search_key` lasts about **30 minutes** (measured: minted 22:51,
@@ -66,9 +84,19 @@ keypulse wechat-token      # reads openid + search_key from WeChat's cache
 keypulse scan ...          # now
 ```
 
+Opening the mini-program is enough because the client renews the key itself:
+its `cgi/cgi.js` treats `code -10000` as "session expired", runs `wx.login` +
+`weapplogin`, and retries. It only skips that when `third_session` is already
+stored, which is why a *reopen* can mint nothing while a launch after an
+expiry always does.
+
 The scan itself also re-reads WeChat's cache on every call, so if the client
 logged in more recently than the saved copy, the newer key is used
 automatically — a stale saved key can no longer mask a fresh one.
+
+If a scan answers `code -10004` ("process failed") that is **not** a
+credential problem: `start_ymd` / `end_ymd` were sent as integers instead of
+`YYYYMMDD` strings. Check the request body before blaming the key.
 
 `wechat-open` stops before clicking a search result (that position is not
 stable); if it reports it could not get focus, tell the user to open it by
@@ -101,8 +129,16 @@ halve image coordinates before adding the window origin.
 If the user has a Baidu cookie and wants the real 百度指数, tell them once:
 
 ```
-keypulse login --baidu-cookie "BDUSS=...; ..."
+keypulse login --provider baidu      # imports it from the browser they use
+keypulse login --baidu-cookie "BDUSS=...; ..."   # or paste it by hand
 ```
+
+百度指数 runs through the local Chrome by default (`src/keypulse/providers/
+baidu_cdp.py`), injecting that cookie into a headless browser and reading the
+搜索指数概览 table. Its JSON API returns `status 10018` even from inside the
+page, so do not try to "fix" a 10018 by retrying the API — use the browser
+transport. If it reports `blocked by Baidu anti-bot`, that is Baidu throttling,
+not a missing session: slow down rather than re-authenticating.
 
 Do **not** report a proxy number as if it were 百度指数 / Google Trends. The
 CLI labels the data source (`mode: index` vs `mode: fallback`) and renames the
