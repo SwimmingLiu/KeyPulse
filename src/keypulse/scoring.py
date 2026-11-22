@@ -43,6 +43,9 @@ from .providers import COMPETITION_PROVIDERS
 DEFAULT_WEIGHTS: Mapping[str, float] = {
     "google_trends": 3.0,
     "baidu_index": 3.0,
+    "douyin_index": 2.5,
+    "wechat_index": 2.5,
+    "wechat_desktop_index": 2.5,
 }
 
 #: Used only when no index provider answered.  These are proxies for demand —
@@ -52,6 +55,7 @@ FALLBACK_WEIGHTS: Mapping[str, float] = {
     "sogou_wechat": 2.0,
     "wikipedia_pageviews": 1.6,
     "wikipedia_search": 1.4,
+    "xiaohongshu_notes": 1.5,
 }
 
 #: Developer-audience sources.  Real signal, but skewed towards technical
@@ -74,7 +78,13 @@ DISCOVERY_ONLY = {
 
 def mode_for(weights: Mapping[str, float]) -> str:
     """Label the score's provenance so the report can be honest about it."""
-    if any(name in weights for name in ("baidu_index", "google_trends")):
+    if any(name in weights for name in (
+            "baidu_index",
+            "google_trends",
+            "douyin_index",
+            "wechat_index",
+            "wechat_desktop_index",
+        )):
         return "index"
     if any(name in weights for name in FALLBACK_WEIGHTS):
         return "fallback"
@@ -88,6 +98,11 @@ LOG_CEILINGS: Mapping[str, float] = {
     "wikipedia_pageviews": 300_000,     # monthly views of one article
     "wikipedia_search": 5_000,          # exact-phrase article matches
     "sogou_wechat": 30_000,             # indexed WeChat articles
+    "xiaohongshu_notes": 3_000,         # mean likes on the first page of RED notes
+    # 抖音指数 is an absolute 30-day average in the millions: 露营 68.4万,
+    # 人工智能 8.4万, a niche term in the low thousands. Ceiling at 200万 keeps
+    # the top of the real range off 100 so the scale still discriminates.
+    "douyin_index": 2_000_000,
     "hn_mentions": 10_000,              # matching HN stories
     "github_repos": 100_000,            # matching repos
     "bing_web": 20_000_000,             # SERP result count

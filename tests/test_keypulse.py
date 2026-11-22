@@ -1122,3 +1122,102 @@ class DoctorPlatformTests(unittest.TestCase):
         # Regardless of whether opencli is present, the check is informational.
         self.assertTrue(bridge["ok"], bridge["detail"])
         self.assertIs(original, doctor.run_checks)
+
+
+class NewIndexProviderTests(unittest.TestCase):
+    """抖音 / 微信 / 小红书: registration, tiers, and honest absence."""
+
+    def setUp(self):
+        from keypulse.providers import build_registry
+
+        self.registry = build_registry(settings(cache_dir=Path("/tmp/keypulse-new-providers")))
+
+    def test_douyin_and_wechat_are_index_tier(self):
+        from keypulse.providers import INDEX_PROVIDERS
+
+        self.assertIn("douyin_index", INDEX_PROVIDERS)
+        self.assertIn("wechat_index", INDEX_PROVIDERS)
+        self.assertEqual(self.registry.get("douyin_index").tier, "index")
+        self.assertEqual(self.registry.get("wechat_index").tier, "index")
+
+    def test_xiaohongshu_is_a_corpus_proxy_not_an_index(self):
+        """RED has no index; it must never be presented as one."""
+        from keypulse.providers import FALLBACK_PROVIDERS
+
+        provider = self.registry.get("xiaohongshu_notes")
+        self.assertIn("xiaohongshu_notes", FALLBACK_PROVIDERS)
+        self.assertEqual(provider.tier, "corpus")
+        self.assertNotEqual(provider.kind, "index")
+
+    def test_wechat_index_reports_missing_credentials(self):
+        """No captured token means unavailable with the reason, never a zero."""
+        provider = self.registry.get("wechat_index")
+        ok, reason = provider.check()
+        self.assertFalse(ok)
+        self.assertIn("KEYPULSE_WECHAT", reason)
+
+        signal = provider.signal("量子计算")
+        self.assertFalse(signal.ok)
+        self.assertIn("openid", signal.error)
+
+    def test_new_providers_are_cn_only(self):
+        self.assertFalse(self.registry.get("douyin_index").supports("US"))
+        self.assertFalse(self.registry.get("wechat_index").supports("US"))
+        self.assertFalse(self.registry.get("xiaohongshu_notes").supports("US"))
+
+    def test_new_providers_honour_replay(self):
+        import json
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp)
+            for name, value in (
+                ("douyin_index", 684000),
+                ("wechat_index", 11666515),
+                ("xiaohongshu_notes", 9276),
+            ):
+                (cache / f"replay-{name}-露营.json").write_text(
+                    json.dumps({"value": value, "unit": "raw"}), encoding="utf-8"
+                )
+            rotated = settings(cache_dir=cache)
+            from keypulse.providers import build_registry
+
+            registry = build_registry(rotated)
+            for name in ("douyin_index", "wechat_index", "xiaohongshu_notes"):
+                signal = registry.get(name).signal("露营", "CN")
+                self.assertTrue(signal.ok, f"{name}: {signal.error}")
+                self.assertEqual(signal.detail.get("transport"), "replay")
+
+    def test_scoring_weights_cover_the_new_sources(self):
+        from keypulse.scoring import DEFAULT_WEIGHTS, FALLBACK_WEIGHTS, LOG_CEILINGS, mode_for
+
+        self.assertIn("douyin_index", DEFAULT_WEIGHTS)
+        self.assertIn("wechat_index", DEFAULT_WEIGHTS)
+        self.assertIn("xiaohongshu_notes", FALLBACK_WEIGHTS)
+        self.assertIn("xiaohongshu_notes", LOG_CEILINGS)
+        self.assertEqual(mode_for({"douyin_index": 1.0}), "index")
+        self.assertEqual(mode_for({"wechat_index": 1.0}), "index")
+        self.assertEqual(mode_for({"xiaohongshu_notes": 1.0}), "fallback")
+
+    def test_douyin_reads_labelled_average_from_page_text(self):
+        """The parser must pick the 搜索指数 block, not whichever number is first."""
+        import re
+
+        from keypulse.providers.douyin_browser import READ_SCRIPT
+
+        self.assertIn("关键词搜索指数", READ_SCRIPT)
+        self.assertIn("尚未收录", READ_SCRIPT)
+        # The panel prints 搜索指数 before 综合指数; grab() anchors on the label.
+        text = "关键词搜索指数 平均值 68.4万 关键词综合指数 平均值 30.9万"
+        i = text.index("关键词搜索指数")
+        m = re.search(r"平均值\s*([\d.]+\s*[万亿]?)", text[i : i + 400])
+        self.assertEqual(m.group(1), "68.4万")
+
+    def test_xiaohongshu_url_encodes_the_keyword(self):
+        import urllib.parse
+
+        from keypulse.providers.xiaohongshu_browser import SEARCH_URL
+
+        url = SEARCH_URL + urllib.parse.quote("露营 装备")
+        self.assertIn("%E9%9C%B2%E8%90%A5", url)
+        self.assertNotIn(" ", url)

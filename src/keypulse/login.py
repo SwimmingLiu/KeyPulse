@@ -77,6 +77,24 @@ INSTRUCTIONS = """\
    export KEYPULSE_BAIDU_COOKIE="BDUSS=xxxx; ..."
 
 查看当前状态：keypulse providers -r CN
+
+──────────────────────────────────────────────
+配置微信指数（两种方式，任选其一）
+
+方式 A：读取微信桌面客户端窗口（macOS，推荐）
+  - 在微信里打开「微信指数」小程序，搜一个词
+  - 授予「屏幕录制」权限：系统设置 → 隐私与安全性 → 屏幕录制
+  - 直接运行：python3 scripts/wechat-index/read_window.py
+  - KeyPulse 会自动使用它（provider: wechat_desktop_index）
+  - 不需要任何 token，也不会过期；但需要窗口处于打开状态
+
+方式 B：抓取小程序请求里的 openid + search_key
+  - 在手机上用 mitmproxy/Charles 抓微信指数小程序的请求
+  - 从 URL 里取 openid=... 与 search_key=...
+  - 写入环境变量：
+      export KEYPULSE_WECHAT_OPENID="..."
+      export KEYPULSE_WECHAT_SEARCH_KEY="..."
+  - search_key 会过期（几分钟到 24 小时），失效后重新抓
 """
 
 

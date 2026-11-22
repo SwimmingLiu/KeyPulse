@@ -14,7 +14,7 @@ from .scoring import ScoredKeyword
 
 
 MODE_LABELS = {
-    "index": "搜索引擎指数（百度指数 / Google Trends）",
+    "index": "搜索引擎指数（百度指数 / Google Trends / 抖音指数 / 微信指数）",
     "fallback": "指数不可用，改用内容量代理指标",
     "explicit": "按指定数据源",
     "blended": "多来源混合",

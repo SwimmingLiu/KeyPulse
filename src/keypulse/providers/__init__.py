@@ -10,7 +10,11 @@ from ..config import Settings
 from .backup import GitHubRepos, HackerNewsMentions, WikipediaPageviews, WikipediaSearch
 from .baidu import BaiduIndex, BaiduSuggest
 from .baidu_browser import BaiduIndexBrowser
+from .douyin_browser import DouyinIndexBrowser
 from .wechat_browser import SogouWeChatBrowser
+from .wechat_desktop import WeChatDesktopIndex
+from .wechat_index_browser import WeChatIndexBrowser
+from .xiaohongshu_browser import XiaohongshuBrowser
 from .base import Provider, Registry
 from .google_trends import GoogleTrends
 from .serp import BingWeb, So360Web, SogouWeChat
@@ -23,9 +27,20 @@ COMPETITION_PROVIDERS = {"bing_web"}
 
 #: Providers that report a search-demand index directly — what the user means
 #: by "搜索引擎关键词指数".  When at least one answers, the score is index-only.
-INDEX_PROVIDERS = ("baidu_index", "google_trends")
+INDEX_PROVIDERS = (
+    "baidu_index",
+    "google_trends",
+    "douyin_index",
+    "wechat_index",
+    "wechat_desktop_index",
+)
 #: Stand-ins used only when no index provider is reachable.
-FALLBACK_PROVIDERS = ("sogou_wechat", "wikipedia_pageviews", "wikipedia_search")
+FALLBACK_PROVIDERS = (
+    "sogou_wechat",
+    "wikipedia_pageviews",
+    "wikipedia_search",
+    "xiaohongshu_notes",
+)
 #: Developer-audience sources; excluded from the main score by default.
 AUDIENCE_PROVIDERS = ("github_repos", "hn_mentions")
 
@@ -45,6 +60,10 @@ def build_registry(settings: Settings) -> Registry:
         GitHubRepos(settings),
         BingWeb(settings),
         _prefer_browser(SogouWeChatBrowser, SogouWeChat, settings)(settings),
+        DouyinIndexBrowser(settings),
+        WeChatIndexBrowser(settings),
+        WeChatDesktopIndex(settings),
+        XiaohongshuBrowser(settings),
         So360Web(settings),
     ]
     return Registry(providers)

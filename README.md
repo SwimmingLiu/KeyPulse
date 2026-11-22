@@ -36,21 +36,35 @@ misleading you: proxy numbers are never labelled as an index.
 
 ### Index first, proxies only as a fallback
 
-The sources that actually measure search demand are **百度指数** and **Google
-Trends**. They are also the two that need setup:
+Four sources measure search demand directly, and all four need a logged-in
+browser (the `opencli` bridge):
 
-| Source | Needs | Notes |
+| Source | Needs | What it reads |
 |---|---|---|
-| 百度指数 `baidu_index` | browser bridge, or a logged-in cookie | no browser: `keypulse login --baidu-cookie ...` |
-| Google Trends `google_trends` | browser bridge, or a clean IP | no browser: `KEYPULSE_PROXY` for the 429 |
+| 百度指数 `baidu_index` | browser bridge, or a logged-in cookie | 搜索指数概览, 近 30 天日均 |
+| Google Trends `google_trends` | browser bridge, or a clean IP | 0–100 interest mean |
+| 抖音指数 `douyin_index` | browser bridge, logged in to creator.douyin.com | 关键词搜索指数 平均值 |
+| 微信指数 `wechat_index` | captured `openid` + `search_key` | 当日搜索指数 |
 
-When either answers, the ranking is built from indexes. When neither is
+抖音 is enabled by logging in to the creator centre in the browser the bridge
+drives — it is free with a normal account. 微信指数 is the one source that
+cannot be obtained by browsing: its token is minted by the WeChat client, so you
+capture it once from a phone (see `keypulse login --help`) and set
+`KEYPULSE_WECHAT_OPENID` / `KEYPULSE_WECHAT_SEARCH_KEY`. The token expires; when
+it does the scan reports 凭据失效 rather than retrying.
+
+When at least one answers, the ranking is built from indexes. When none is
 reachable, KeyPulse falls back to volume proxies — Sogou's WeChat article count,
-Wikipedia exact-phrase matches and pageviews — and the report says so
-(`mode: fallback`, and the score column is renamed 热度分). It never presents a
-proxy number as an index. If a whole tier fails mid-scan (a source that passed
-its health check but then throttled every query), the scan drops that tier and
-retries with the next one.
+Wikipedia exact-phrase matches and pageviews, and 小红书 note engagement — and
+the report says so (`mode: fallback`, and the score column is renamed 热度分).
+It never presents a proxy number as an index. If a whole tier fails mid-scan (a
+source that passed its health check but then throttled every query), the scan
+drops that tier and retries with the next one.
+
+**小红书 has no public search index.** The provider `xiaohongshu_notes` reads the
+search result page and reports the mean likes of the first page of notes. That
+is a popularity proxy — it is registered in the corpus tier, never scored as an
+index, and the report labels it as 平均点赞 rather than 指数.
 
 Autocomplete sources (百度/Google/Bing/360/搜狗下拉词) are used for **discovery**
 — growing a keyword list — not for volume: every engine returns ~10 phrases

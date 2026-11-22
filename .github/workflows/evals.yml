@@ -24,7 +24,12 @@ env:
 jobs:
   evals:
     name: plugin evals
-    runs-on: ubuntu-latest
+    # macOS: Claude Code's own Linux sandbox needs a nested user namespace and
+    # a CAP_SYS_ADMIN-gated setgroups inside it, which GitHub's Linux runners
+    # block even after relaxing AppArmor (a bare `bwrap --unshare-user` passes,
+    # the sandboxed shell still fails). The macOS sandbox backend needs no
+    # user namespace, and runs the same suite unchanged.
+    runs-on: macos-latest
     timeout-minutes: 30
     steps:
       - name: Require EVAL_ANTHROPIC_KEY
@@ -47,55 +52,8 @@ jobs:
       - name: Install Claude Code
         run: npm install -g @anthropic-ai/claude-code
 
-      - name: Install sandbox dependencies
-        # `claude plugin eval` grants Bash only through a confined shell. On
-        # Linux that confinement needs bubblewrap + socat; without them every
-        # run is refused before it starts (0 turns, score 0). The ubuntu-latest
-        # image ships bwrap but not socat.
-        #
-        # Ubuntu 24.04 additionally restricts unprivileged user namespaces with
-        # AppArmor, so bwrap fails with "nested userns is capability-restricted
-        # ... neither uid 0 nor CAP_SYS_ADMIN" even with bubblewrap installed.
-        # Every Bash call in the eval then errors before running.
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends bubblewrap socat
-          # Claude Code's sandbox unshares a user namespace and writes
-          # setgroups inside it. Ubuntu 24.04's AppArmor restriction and the
-          # nested-userns check both get in the way; disable the policy knob
-          # and drop the sysctl that gates it.
-          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
-          sudo sysctl -w kernel.unprivileged_userns_clone=1 || true
-          sysctl -a 2>/dev/null | grep -E 'unprivileged_userns|apparmor' || true
-          socat -V | head -1
-          bwrap --version
-          bwrap --dev-bind / / --unshare-user --unshare-pid \
-            sh -c 'echo nested-userns-ok' || echo "bwrap nested unshare FAILED"
-
       - name: Validate plugin
         run: claude plugin validate . --strict
-
-      - name: Configure the eval sandbox for nested user namespaces
-        # Even with bubblewrap present and AppArmor relaxed, Claude Code's own
-        # sandbox starts bash inside a user namespace whose `setgroups` write
-        # needs CAP_SYS_ADMIN:
-        #
-        #   apply-seccomp: write /proc/self/setgroups (nested userns is
-        #   capability-restricted; caller must provide CAP_SYS_ADMIN)
-        #
-        # allowNestedUserNamespaces is the setting for environments where the
-        # sandboxed command itself may create a namespace (Docker, nested
-        # bwrap). It only affects this CI sandbox, not the plugin.
-        run: |
-          mkdir -p .claude
-          python3 - <<'PY'
-          import json, pathlib
-          path = pathlib.Path(".claude/settings.json")
-          data = json.loads(path.read_text()) if path.exists() else {}
-          data.setdefault("sandbox", {})["allowNestedUserNamespaces"] = True
-          path.write_text(json.dumps(data, indent=2) + "\n")
-          print(path.read_text())
-          PY
 
       - name: Check replay recordings
         # Cases replay recorded provider values, so the suite needs no network

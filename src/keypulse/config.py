@@ -117,6 +117,15 @@ class Settings:
     baidu_cookie: str = field(
         default_factory=lambda: str(_lookup("baidu_cookie", "KEYPULSE_BAIDU_COOKIE", ""))
     )
+    # 微信指数 credentials, captured once from the mini-program request.
+    # The search_key expires (minutes to ~24h), so this is a value the user
+    # refreshes rather than a durable key.
+    wechat_openid: str = field(
+        default_factory=lambda: str(_lookup("wechat_openid", "KEYPULSE_WECHAT_OPENID", ""))
+    )
+    wechat_search_key: str = field(
+        default_factory=lambda: str(_lookup("wechat_search_key", "KEYPULSE_WECHAT_SEARCH_KEY", ""))
+    )
     github_token: str = field(
         default_factory=lambda: str(_lookup("github_token", "GITHUB_TOKEN", ""))
     )
