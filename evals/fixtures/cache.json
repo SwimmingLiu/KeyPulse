@@ -2,6 +2,32 @@
   "region": "CN",
   "keywords": {
     "人工智能": {
+      "wechat_index": {
+        "metric": "index",
+        "value": 80293244.0,
+        "unit": "raw",
+        "detail": {
+          "latest_day": 80293244,
+          "prev_day": 86628316,
+          "change_pct": -7.31,
+          "points": 31,
+          "series_tail": [
+            82458285,
+            82475847,
+            92994789,
+            89063020,
+            87226882,
+            86628316,
+            80293244
+          ],
+          "window": {
+            "start": "2026-10-22",
+            "end": "2026-11-21"
+          },
+          "note": "微信指数小程序协议（wxaweb/wxindex）",
+          "transport": "wxaweb"
+        }
+      },
       "baidu_index": {
         "metric": "index",
         "value": 1728.0,
@@ -13,18 +39,57 @@
           "transport": "opencli"
         }
       },
+      "douyin_index": {
+        "metric": "index",
+        "value": 84000.0,
+        "unit": "raw",
+        "detail": {
+          "search_index": 84000,
+          "comprehensive_index": 48000,
+          "yoy": "-5.06%",
+          "mom": "+8.97%",
+          "window": "2026-10-20 ~ 2026-11-20",
+          "transport": "opencli"
+        }
+      },
       "google_trends": {
         "metric": "interest",
-        "value": 47.3,
+        "value": 46.7,
         "unit": "scaled_0_100",
         "detail": {
-          "points": 53,
+          "points": 54,
           "window": "today 12-m",
           "transport": "opencli"
         }
       }
     },
     "量子计算": {
+      "wechat_index": {
+        "metric": "index",
+        "value": 939686.0,
+        "unit": "raw",
+        "detail": {
+          "latest_day": 939686,
+          "prev_day": 1161955,
+          "change_pct": -19.13,
+          "points": 31,
+          "series_tail": [
+            1060571,
+            1079761,
+            1040327,
+            1671323,
+            1131067,
+            1161955,
+            939686
+          ],
+          "window": {
+            "start": "2026-10-22",
+            "end": "2026-11-21"
+          },
+          "note": "微信指数小程序协议（wxaweb/wxindex）",
+          "transport": "wxaweb"
+        }
+      },
       "baidu_index": {
         "metric": "index",
         "value": 201.0,
@@ -36,18 +101,69 @@
           "transport": "opencli"
         }
       },
+      "douyin_index": {
+        "metric": "index",
+        "value": 2595.0,
+        "unit": "raw",
+        "detail": {
+          "search_index": 2595,
+          "comprehensive_index": 1125,
+          "yoy": "-84.12%",
+          "mom": "+72.77%",
+          "window": "2026-10-20 ~ 2026-11-20",
+          "transport": "opencli"
+        }
+      },
       "google_trends": {
         "metric": "interest",
-        "value": 42.9,
+        "value": 42.6,
         "unit": "scaled_0_100",
         "detail": {
-          "points": 53,
+          "points": 54,
           "window": "today 12-m",
           "transport": "opencli"
         }
       }
     },
     "猫粮": {
+      "wechat_index": {
+        "metric": "index",
+        "value": 11121642.0,
+        "unit": "raw",
+        "detail": {
+          "latest_day": 11121642,
+          "prev_day": 10603762,
+          "change_pct": 4.88,
+          "points": 31,
+          "series_tail": [
+            10987712,
+            9867623,
+            10269279,
+            10548343,
+            10066199,
+            10603762,
+            11121642
+          ],
+          "window": {
+            "start": "2026-10-22",
+            "end": "2026-11-21"
+          },
+          "note": "微信指数小程序协议（wxaweb/wxindex）",
+          "transport": "wxaweb"
+        }
+      },
+      "wechat_desktop_index": {
+        "metric": "index",
+        "value": 11121642.0,
+        "unit": "raw",
+        "detail": {
+          "pct": null,
+          "date": null,
+          "text": "1lii. 微信指数 公告 | 微信指数新版本说明与规则更新 Q搜索关键词 我的订阅 订阅关键词/组合，在指数产生异动目 浏览历史 猫粮 11,121,642 露营装备 808,198 展开〈 《服务声明》",
+          "note": "从微信桌面客户端的「微信指数」窗口读取",
+          "transport": "desktop-ocr"
+        }
+      },
       "baidu_index": {
         "metric": "index",
         "value": 672.0,
@@ -59,17 +175,30 @@
           "transport": "opencli"
         }
       },
+      "douyin_index": {
+        "metric": "index",
+        "value": 946000.0,
+        "unit": "raw",
+        "detail": {
+          "search_index": 946000,
+          "comprehensive_index": 336000,
+          "yoy": "-2.11%",
+          "mom": "+5.88%",
+          "window": "2026-10-20 ~ 2026-11-20",
+          "transport": "opencli"
+        }
+      },
       "google_trends": {
         "metric": "interest",
-        "value": 11.2,
+        "value": 11.0,
         "unit": "scaled_0_100",
         "detail": {
-          "points": 53,
+          "points": 54,
           "window": "today 12-m",
           "transport": "opencli"
         }
       }
     }
   },
-  "captured_at": "2026-11-21T09:20:33-08:00"
+  "captured_at": "2026-11-21T20:19:21-08:00"
 }

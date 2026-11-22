@@ -21,7 +21,7 @@ from . import __version__
 from .config import Settings
 from .expand import add_modifiers, detect_language, expand, suggest_seeds
 from .doctor import cmd_doctor
-from .login import cmd_login
+from .login import cmd_login, cmd_wechat_token
 from .providers import build_registry
 from .render import render_json, render_leaders, render_markdown, render_table
 from .scan import ScanRequest, describe_provider_health, run_scan
@@ -80,10 +80,18 @@ def build_parser() -> argparse.ArgumentParser:
     doctor.add_argument("--offline", action="store_true")
     doctor.set_defaults(func=cmd_doctor)
 
-    login = sub.add_parser("login", help="store a Baidu Index cookie")
+    login = sub.add_parser("login", help="store a Baidu Index cookie / show setup instructions")
     login.add_argument("--baidu-cookie", default="", help="the cookie string copied from index.baidu.com")
     login.add_argument("--clear", action="store_true", help="forget the stored cookie")
     login.set_defaults(func=cmd_login)
+
+    wechat_token = sub.add_parser(
+        "wechat-token",
+        help="read 微信指数 credentials from the WeChat client (macOS)",
+    )
+    wechat_token.add_argument("--clear", action="store_true", help="forget the stored credentials")
+    wechat_token.add_argument("--container", default="", help="override the WeChat container path")
+    wechat_token.set_defaults(func=cmd_wechat_token)
 
     providers = sub.add_parser("providers", help="list providers and their availability")
     providers.add_argument("--region", "-r", default="GLOBAL")

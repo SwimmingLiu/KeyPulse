@@ -1,70 +1,115 @@
-"""微信指数 (WeChat Index) via the browser bridge, using captured credentials.
+"""微信指数 (WeChat Index) over HTTP, using the mini-program's own protocol.
 
-This is the real 微信指数 (the mini-program's index), not Sogou's WeChat
-article count — that one lives in ``wechat_browser.py`` and is a separate,
-always-available proxy.
+This is the real 微信指数 (the search index the「微信指数」mini-program shows),
+not Sogou's WeChat article count — that one lives in ``wechat_browser.py`` and
+is a separate, always-available proxy.
 
-Why it needs credentials: the index is served from
-``search.weixin.qq.com/cgi-bin/searchweb/wxindex/querywxindexgroup`` and the
-request carries three things that only the WeChat client can mint:
+The protocol was recovered by unpacking the mini-program itself
+(``__APP__.wxapkg``, the ``V1MMWX`` container, XOR 0x33 body):
 
-* ``openid`` — the mini-program openid of the account that opened 微信指数;
-* ``search_key`` — a short-lived token (minutes to ~24h);
-* a ``Referer`` naming the mini-program's appid — the browser sets this
-  itself for a same-origin fetch, so nothing about it is needed here.
+* endpoint — ``POST https://search.weixin.qq.com/cgi-bin/wxaweb/wxindex``
+* body — ``{"openid": …, "search_key": …, "cgi_name": "GetDefaultIndex",
+  "query": ["关键词", …], "compound_word": [], "start_ymd": "YYYYMMDD",
+  "end_ymd": "YYYYMMDD", "is_beta": 1}``
+* signature — header ``X-Request-Sign`` = ``md5(search_key + query.join(""))``
+  (``cgi/cgi.js``: ``p([t,r].join("")).toString()`` with ``r = query.join("")``)
+* response — ``{code: 0, content: {resp_list: [{query, status,
+  indexes: [{ctype, cvalue, time_indexes: [{time, score}, …]}]}]}}``
+  with one point per day, oldest first.
 
-``index.weixin.qq.com`` does not exist (NXDOMAIN); there is no web endpoint to
-fall back on.  Credentials come from capturing one request from the WeChat
-mini-program (e.g. mitmproxy on a phone) — see ``keypulse login --help``.
+Credentials come from ``weapplogin``, which the mini-program calls on launch::
 
-Given credentials, the response is JSON and needs no decryption::
+    POST /cgi-bin/searchweb/weapplogin  {appid, js_code}   (wx.login code)
+    -> {"data": {"openid": "...", "search_key": "..."}, "errcode": 0}
 
-    data.group_list[].group_wxindex[].wxindex_str = "34572,34358,..."
-
-one comma-separated value per day, newest last.  This provider reports the
-latest day as the value and keeps the series in ``detail``.
-
-Because the token expires, an expired credential is reported as
-"需要重新获取" rather than as a network failure, so the scan can tell the user
-to re-capture instead of retrying pointlessly.
+``search_key`` is short-lived (it embeds a millisecond timestamp and the
+server rejects it after roughly an hour or two), so an expired key is
+reported as "需要刷新" rather than as a network failure — retrying such a key
+is pointless.  ``scripts/wechat-index/` reads the key straight out of the
+WeChat client's own webview cache, so refreshing is one command.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
-import urllib.parse
+import time
+from datetime import datetime, timedelta
 
-from .. import opencli as bridge
+from ..http import FetchError, fetch
 from ..models import Signal
 from .base import Provider, normalise_region
 
-SESSION = "keypulse-wechat-index"
-HOST = "https://search.weixin.qq.com"
-PATH = "/cgi-bin/searchweb/wxindex/querywxindexgroup"
-#: Fetches one keyword. ``__PARAMS__`` is a JSON object substituted below.
-#: Runs inside the mini-program's own page so the Referer and any cookies the
-#: client set are present.
-FETCH_SCRIPT = r"""
-(async () => {
-  const params = __PARAMS__;
-  const q = new URLSearchParams(params).toString();
-  try {
-    const r = await fetch('/cgi-bin/searchweb/wxindex/querywxindexgroup?' + q, {
-      credentials: 'include',
-      headers: { 'Accept': 'application/json' },
-    });
-    const text = await r.text();
-    let body = null;
-    try { body = JSON.parse(text); } catch (e) { body = { raw: text.slice(0, 300) }; }
-    return JSON.stringify({ status: r.status, body });
-  } catch (e) {
-    return JSON.stringify({ error: String(e).slice(0, 120) });
-  }
-})()
-"""
+HOST = "search.weixin.qq.com"
+CGI = "wxindex"
+
+#: How far back to ask for.  微信指数 serves 365 days; asking for less keeps
+#: the response small while still giving a week of trend in ``detail``.
+LOOKBACK_DAYS = 30
 
 
-class WeChatIndexBrowser(Provider):
+def _today() -> datetime:
+    return datetime.now()
+
+
+def request_sign(search_key: str, queries: list[str]) -> str:
+    """``X-Request-Sign`` exactly as ``cgi/cgi.js`` builds it.
+
+    ``md5(search_key + query.map(...).join(""))`` — the query list is
+    concatenated with no separator, before any URL encoding.
+    """
+    joined = "".join(queries)
+    return hashlib.md5((search_key + joined).encode("utf-8")).hexdigest()
+
+
+def build_body(
+    openid: str,
+    search_key: str,
+    queries: list[str],
+    start_ymd: str,
+    end_ymd: str,
+) -> dict:
+    """The request body ``cgi/index.js`` sends for ``GetDefaultIndex``."""
+    return {
+        "openid": openid,
+        "search_key": search_key,
+        "cgi_name": "GetDefaultIndex",
+        "query": list(queries),
+        "compound_word": [],
+        "start_ymd": start_ymd,
+        "end_ymd": end_ymd,
+        "is_beta": 1,
+    }
+
+
+def parse_latest(content: dict) -> tuple[int | None, list[float], str]:
+    """Pull the newest ``score`` out of a ``GetDefaultIndex`` response.
+
+    Returns ``(latest, series, query)``.  ``latest`` is ``None`` when the
+    keyword came back with no points, which is how 微信指数 says "暂未收录".
+
+    ``resp_list`` is positional — ``resp_list[i]`` answers ``query[i]`` — so
+    the caller asks about one keyword at a time and reads entry 0.  Reading
+    the first non-empty entry instead would attribute one keyword's number to
+    another when several were queried at once.
+    """
+    resp_list = (content or {}).get("resp_list") or []
+    if not resp_list:
+        return None, [], ""
+    first = resp_list[0]
+    query = str(first.get("query") or "")
+    series: list[float] = []
+    for index in first.get("indexes") or []:
+        for point in index.get("time_indexes") or []:
+            score = point.get("score")
+            if isinstance(score, (int, float)):
+                series.append(float(score))
+    if not series:
+        return None, [], query
+    return int(series[-1]), series, query
+
+
+class WeChatIndex(Provider):
     name = "wechat_index"
     label = "微信指数"
     metric = "index"
@@ -93,13 +138,9 @@ class WeChatIndexBrowser(Provider):
         if not openid or not key:
             return (
                 False,
-                "需要 KEYPULSE_WECHAT_OPENID 与 KEYPULSE_WECHAT_SEARCH_KEY"
-                "（从微信指数小程序抓一次请求；见 keypulse login --help）",
+                "需要 openid + search_key（运行 keypulse wechat-token 从微信客户端读取）",
             )
-        ok, reason = bridge.available()
-        if not ok:
-            return False, f"需要浏览器桥接：{reason}"
-        return True, "ok (browser bridge)"
+        return True, "ok (mini-program protocol)"
 
     def signal(self, keyword: str, region: str = "CN") -> Signal:
         recorded = self._replay(keyword)
@@ -107,69 +148,120 @@ class WeChatIndexBrowser(Provider):
             return self._replayed_signal(keyword, region, recorded)
         openid, key = self._credentials()
         if not openid or not key:
-            return self._failure(keyword, "缺少 openid / search_key", region)
+            return self._failure(
+                keyword,
+                "缺少 openid / search_key（运行 keypulse wechat-token 从微信客户端读取）",
+                region,
+            )
         return self._one(keyword, region, openid, key)
 
     def _one(self, keyword: str, region: str, openid: str, key: str) -> Signal:
-        # The request must look like it came from the mini-program's web-view.
-        page = f"{HOST}/cgi-bin/searchweb/clientjump?tag=wxindex"
-        try:
-            bridge.open_page(self.settings, page, session=SESSION)
-        except Exception:  # noqa: BLE001 - the fetch may still succeed
-            pass
-        params = {
-            "wxindex_query_list": keyword,
-            "gid": "",
-            "openid": openid,
-            "search_key": key,
+        end = _today()
+        start = end - timedelta(days=LOOKBACK_DAYS)
+        queries = [keyword]
+        body = build_body(
+            openid,
+            key,
+            queries,
+            start.strftime("%Y%m%d"),
+            end.strftime("%Y%m%d"),
+        )
+        headers = {
+            "Content-Type": "application/json",
+            "X-Request-Sign": request_sign(key, queries),
+            "Accept": "application/json, text/plain, */*",
         }
+        url = f"https://{HOST}/cgi-bin/wxaweb/{CGI}"
         try:
-            payload = bridge.eval_js(
+            response = fetch(
+                url,
                 self.settings,
-                FETCH_SCRIPT.replace("__PARAMS__", json.dumps(params, ensure_ascii=False)),
-                session=SESSION,
-                timeout=max(45.0, self.settings.timeout * 3),
+                headers=headers,
+                data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
+                # Never cache an auth failure: the key is refreshable, so the
+                # next run must actually retry rather than replay a rejection.
+                use_cache=True,
             )
-            data = json.loads(payload) if isinstance(payload, str) else payload
-        except Exception as exc:  # noqa: BLE001
-            return self._failure(keyword, f"{type(exc).__name__}: {exc}", region)
+        except FetchError as exc:
+            return self._failure(keyword, str(exc), region)
 
-        if "error" in data:
-            return self._failure(keyword, str(data["error"]), region)
-        body = data.get("body") or {}
-        errcode = body.get("errcode")
-        if errcode not in (0, None):
-            # 1000/1001/1008 are the auth family: the token is wrong or stale.
-            if errcode in (1000, 1001, 1008):
-                return self._failure(
-                    keyword, f"微信指数凭据失效（errcode {errcode}）：请重新抓取 search_key", region
-                )
-            return self._failure(keyword, f"微信指数返回 errcode {errcode}: {body.get('msg')}", region)
+        try:
+            payload = response.json()
+        except ValueError:
+            return self._failure(keyword, f"响应不是 JSON：{response.text[:120]}", region)
 
-        groups = ((body.get("data") or {}).get("group_list") or [])
-        series: list[float] = []
-        for group in groups:
-            for item in group.get("group_wxindex") or []:
-                raw = item.get("wxindex_str") or ""
-                series = [float(x) for x in raw.split(",") if x.strip() not in ("", "-")]
-                if series:
-                    break
-            if series:
-                break
-        if not series:
-            return self._failure(keyword, "响应里没有 wxindex_str（该词可能未被收录）", region)
+        code = payload.get("code")
+        if code in (0, None) and not payload.get("content"):
+            return self._failure(keyword, "响应里没有 content", region)
+        if code == -10000:
+            return self._failure(
+                keyword,
+                "微信指数凭据失效（auth failed）：运行 keypulse wechat-token 刷新 search_key",
+                region,
+            )
+        if code == -10002:
+            # The CGI answers -10002 with an empty resp_list for an
+            # unindexed word, which is a result, not an error.
+            return Signal(
+                keyword=keyword,
+                provider=self.name,
+                metric=self.metric,
+                value=0.0,
+                unit=self.unit,
+                region=normalise_region(region),
+                detail={
+                    "unindexed": True,
+                    "note": "微信指数未收录该词",
+                    "transport": "wxaweb",
+                },
+            )
+        if code not in (0, -10002):
+            return self._failure(
+                keyword, f"微信指数返回 code {code}: {payload.get('msg', '')}", region
+            )
+
+        latest, series, answered = parse_latest(payload.get("content") or {})
+        if latest is None:
+            return Signal(
+                keyword=keyword,
+                provider=self.name,
+                metric=self.metric,
+                value=0.0,
+                unit=self.unit,
+                region=normalise_region(region),
+                detail={
+                    "unindexed": True,
+                    "note": "微信指数未收录该词",
+                    "transport": "wxaweb",
+                },
+            )
+        # A positional answer for a different word means the server matched
+        # something else; report nothing rather than the wrong keyword's index.
+        if answered and answered != keyword:
+            return self._failure(
+                keyword,
+                f"服务端返回的是「{answered}」的指数，不是「{keyword}」，已丢弃",
+                region,
+            )
+        prev = series[-2] if len(series) > 1 else None
+        change = None
+        if prev:
+            change = round((series[-1] - prev) / prev * 100, 2)
         return Signal(
             keyword=keyword,
             provider=self.name,
             metric=self.metric,
-            value=series[-1],
+            value=float(latest),
             unit=self.unit,
             region=normalise_region(region),
             detail={
-                "latest_day": series[-1],
-                "mean": round(sum(series) / len(series), 1),
+                "latest_day": int(latest),
+                "prev_day": int(prev) if prev is not None else None,
+                "change_pct": change,
                 "points": len(series),
-                "series_tail": series[-7:],
-                "transport": "opencli",
+                "series_tail": [int(x) for x in series[-7:]],
+                "window": {"start": start.strftime("%Y-%m-%d"), "end": end.strftime("%Y-%m-%d")},
+                "note": "微信指数小程序协议（wxaweb/wxindex）",
+                "transport": "wxaweb",
             },
         )

@@ -37,21 +37,50 @@ misleading you: proxy numbers are never labelled as an index.
 ### Index first, proxies only as a fallback
 
 Four sources measure search demand directly, and all four need a logged-in
-browser (the `opencli` bridge):
+browser (the `opencli` bridge) — except 微信指数, whose credentials are read
+from the WeChat client itself:
 
 | Source | Needs | What it reads |
 |---|---|---|
 | 百度指数 `baidu_index` | browser bridge, or a logged-in cookie | 搜索指数概览, 近 30 天日均 |
 | Google Trends `google_trends` | browser bridge, or a clean IP | 0–100 interest mean |
 | 抖音指数 `douyin_index` | browser bridge, logged in to creator.douyin.com | 关键词搜索指数 平均值 |
-| 微信指数 `wechat_index` | captured `openid` + `search_key` | 当日搜索指数 |
+| 微信指数 `wechat_index` | `keypulse wechat-token` (macOS) | 当日搜索指数 |
+| 微信指数(窗口) `wechat_desktop_index` | the index window open + Screen Recording | 窗口里的当日数字 |
 
 抖音 is enabled by logging in to the creator centre in the browser the bridge
-drives — it is free with a normal account. 微信指数 is the one source that
-cannot be obtained by browsing: its token is minted by the WeChat client, so you
-capture it once from a phone (see `keypulse login --help`) and set
-`KEYPULSE_WECHAT_OPENID` / `KEYPULSE_WECHAT_SEARCH_KEY`. The token expires; when
-it does the scan reports 凭据失效 rather than retrying.
+drives — it is free with a normal account.
+
+**微信指数 has no web endpoint** (`index.weixin.qq.com` is NXDOMAIN); the index
+lives behind the mini-program's own CGI. KeyPulse speaks that protocol
+directly — it was recovered by unpacking `__APP__.wxapkg`:
+
+```
+POST https://search.weixin.qq.com/cgi-bin/wxaweb/wxindex
+X-Request-Sign: md5(search_key + query.join(""))
+{"openid": …, "search_key": …, "cgi_name": "GetDefaultIndex",
+ "query": ["关键词"], "compound_word": [], "start_ymd": …, "end_ymd": …, "is_beta": 1}
+→ {"code": 0, "content": {"resp_list": [{"query": …, "indexes": [
+     {"time_indexes": [{"time": 20261121, "score": 3551726}, …]}]}]}}
+```
+
+Only the credential is fragile. `search_key` is minted by the WeChat client's
+`weapplogin` and ages out in about an hour or two, so:
+
+```bash
+keypulse wechat-token      # reads openid + search_key out of WeChat's own
+                           # webview cache — no proxy, no capture, no phone
+```
+
+Re-running that one command is the whole refresh. When the key has expired the
+scan says 凭据失效 and names the command, rather than retrying a dead key. If
+you prefer not to read the cache, `KEYPULSE_WECHAT_OPENID` /
+`KEYPULSE_WECHAT_SEARCH_KEY` work as an override.
+
+`wechat_desktop_index` is the credential-free fallback: it screenshots the
+「微信指数」 window in the macOS client and OCRs it (`scripts/wechat-index/`).
+It needs Accessibility and Screen Recording permission and the window open on
+the keyword being asked about, but it never expires.
 
 When at least one answers, the ranking is built from indexes. When none is
 reachable, KeyPulse falls back to volume proxies — Sogou's WeChat article count,
@@ -337,9 +366,14 @@ unset ANTHROPIC_API_KEY
 
 ## Notes on the data sources
 
-- 微信指数 has no public API (it lives in a mini-program); KeyPulse uses Sogou's
-  WeChat article count as the closest public proxy. Sogou throttles by IP — if
-  it shows "触发反爬验证", the scan continues without it.
+- 微信指数 has no web endpoint; it is served by the mini-program's own CGI
+  (`wxaweb/wxindex`). KeyPulse speaks that protocol with credentials read from
+  the WeChat client by `keypulse wechat-token`. Sogou's WeChat article count
+  (`sogou_wechat`) remains available as a public fallback when that is not set.
+  Sogou throttles by IP — if it shows "触发反爬验证", the scan continues without it.
+- The `search_key` that 微信指数 accepts expires in roughly an hour or two. Do
+  not cache a rejection: an expired key must fail loudly with the refresh
+  command, never silently become a zero.
 - 百度指数 requires a logged-in cookie. KeyPulse implements the published `ptbk`
   decryption scheme and reports a missing cookie as *unavailable*, not as zero.
 - Google Trends rate-limits by IP. Expect 429 without a proxy on shared

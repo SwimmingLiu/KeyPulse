@@ -5,6 +5,7 @@ Run with:  python3 -m unittest discover -s tests -v
 
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import sys
@@ -41,6 +42,11 @@ def settings(**overrides) -> Settings:
     if not any(k in overrides for k in ("offline", "cache_dir")):
         # Keep file-based config out of the way unless a test opts in.
         base.cache_dir = Path("/tmp/keypulse-test-cache")
+    # Settings() fills these from the developer's own credential store; a test
+    # must not start talking to 微信指数 just because the machine has a token.
+    for name in ("baidu_cookie", "wechat_openid", "wechat_search_key"):
+        if name not in overrides:
+            setattr(base, name, "")
     for key, value in overrides.items():
         setattr(base, key, value)
     return base
@@ -1150,11 +1156,11 @@ class NewIndexProviderTests(unittest.TestCase):
         self.assertNotEqual(provider.kind, "index")
 
     def test_wechat_index_reports_missing_credentials(self):
-        """No captured token means unavailable with the reason, never a zero."""
+        """No token means unavailable with the reason, never a zero."""
         provider = self.registry.get("wechat_index")
         ok, reason = provider.check()
         self.assertFalse(ok)
-        self.assertIn("KEYPULSE_WECHAT", reason)
+        self.assertIn("wechat-token", reason)
 
         signal = provider.signal("量子计算")
         self.assertFalse(signal.ok)
@@ -1295,3 +1301,287 @@ class WeChatDesktopParseTests(unittest.TestCase):
         want = "".join("行 测".split())
         self.assertEqual(want, "行测")
         self.assertNotEqual("".join("行测分".split()), want)
+
+
+class WeChatIndexProtocolTests(unittest.TestCase):
+    """The 微信指数 protocol recovered from the mini-program's own source.
+
+    These pin the wire format: if the signature formula or the response
+    parsing drifts, live scans start failing or, worse, silently report the
+    wrong keyword's number.
+    """
+
+    def test_signature_is_md5_of_key_then_joined_query(self):
+        from keypulse.providers import wechat_index_browser as wx
+
+        # cgi/cgi.js: p([search_key, query.join("")].join("")).toString()
+        self.assertEqual(
+            wx.request_sign("KEY", ["行测"]),
+            hashlib.md5(b"KEY\xe8\xa1\x8c\xe6\xb5\x8b").hexdigest(),
+        )
+
+    def test_signature_joins_multiple_queries_without_separator(self):
+        from keypulse.providers import wechat_index_browser as wx
+
+        self.assertEqual(
+            wx.request_sign("K", ["a", "b"]),
+            hashlib.md5(b"Kab").hexdigest(),
+        )
+
+    def test_body_matches_get_default_index(self):
+        from keypulse.providers import wechat_index_browser as wx
+
+        body = wx.build_body("OID", "KEY", ["行测"], "20261114", "20261121")
+        self.assertEqual(body["cgi_name"], "GetDefaultIndex")
+        self.assertEqual(body["openid"], "OID")
+        self.assertEqual(body["search_key"], "KEY")
+        self.assertEqual(body["query"], ["行测"])
+        self.assertEqual(body["compound_word"], [])
+        self.assertEqual(body["start_ymd"], "20261114")
+        self.assertEqual(body["end_ymd"], "20261121")
+        self.assertEqual(body["is_beta"], 1)
+
+    def test_parse_reads_the_newest_score(self):
+        from keypulse.providers import wechat_index_browser as wx
+
+        content = {
+            "resp_list": [
+                {
+                    "query": "行测",
+                    "status": 0,
+                    "indexes": [
+                        {
+                            "ctype": 0,
+                            "cvalue": 0,
+                            "time_indexes": [
+                                {"time": 20261120, "score": 3401000},
+                                {"time": 20261121, "score": 3551726},
+                            ],
+                        }
+                    ],
+                }
+            ]
+        }
+        latest, series, query = wx.parse_latest(content)
+        self.assertEqual(latest, 3551726)
+        self.assertEqual(series, [3401000.0, 3551726.0])
+        self.assertEqual(query, "行测")
+
+    def test_parse_takes_entry_zero_not_the_first_non_empty(self):
+        """resp_list is positional; a later entry belongs to another keyword.
+
+        Reading "the first entry that has numbers" would report 露营's index
+        for 行测 when 行测 came back unindexed.
+        """
+        from keypulse.providers import wechat_index_browser as wx
+
+        content = {
+            "resp_list": [
+                {"query": "行测", "status": 0, "indexes": []},
+                {
+                    "query": "露营",
+                    "status": 0,
+                    "indexes": [{"time_indexes": [{"time": 20261121, "score": 38299736}]}],
+                },
+            ]
+        }
+        latest, series, query = wx.parse_latest(content)
+        self.assertIsNone(latest)
+        self.assertEqual(series, [])
+        self.assertEqual(query, "行测")
+
+    def test_parse_empty_response_is_not_a_zero(self):
+        from keypulse.providers import wechat_index_browser as wx
+
+        self.assertEqual(wx.parse_latest({"resp_list": []}), (None, [], ""))
+        self.assertEqual(wx.parse_latest({}), (None, [], ""))
+
+    def test_unindexed_signal_is_a_result_not_an_error(self):
+        """-10002 with an empty resp_list means 暂未收录; report it as such."""
+        from keypulse.providers import wechat_index_browser as wx
+        from keypulse.http import Response
+
+        provider = wx.WeChatIndex(_wechat_settings())
+        original = wx.fetch
+
+        def fake_fetch(url, settings, **kwargs):
+            return Response(text=json.dumps({"code": -10002, "content": {"resp_list": []}}),
+                            status=200, url=url)
+
+        wx.fetch = fake_fetch
+        try:
+            signal = provider.signal("不存在的词")
+        finally:
+            wx.fetch = original
+        self.assertTrue(signal.ok)
+        self.assertEqual(signal.value, 0.0)
+        self.assertTrue(signal.detail.get("unindexed"))
+
+    def test_expired_key_is_reported_as_refreshable(self):
+        """code -10000 means the search_key aged out, not a network failure."""
+        from keypulse.providers import wechat_index_browser as wx
+        from keypulse.http import Response
+
+        provider = wx.WeChatIndex(_wechat_settings())
+        original = wx.fetch
+
+        def fake_fetch(url, settings, **kwargs):
+            return Response(text='{"code":-10000,"msg":"auth failed."}', status=200, url=url)
+
+        wx.fetch = fake_fetch
+        try:
+            signal = provider.signal("行测")
+        finally:
+            wx.fetch = original
+        self.assertFalse(signal.ok)
+        self.assertIn("wechat-token", signal.error)
+        self.assertIn("失效", signal.error)
+
+    def test_server_answer_for_another_word_is_discarded(self):
+        """Never report a number the server attributed to a different query."""
+        from keypulse.providers import wechat_index_browser as wx
+        from keypulse.http import Response
+
+        provider = wx.WeChatIndex(_wechat_settings())
+        original = wx.fetch
+        body = {
+            "code": 0,
+            "content": {
+                "resp_list": [
+                    {
+                        "query": "露营装备",
+                        "status": 0,
+                        "indexes": [{"time_indexes": [{"time": 20261121, "score": 808198}]}],
+                    }
+                ]
+            },
+        }
+
+        def fake_fetch(url, settings, **kwargs):
+            return Response(text=json.dumps(body), status=200, url=url)
+
+        wx.fetch = fake_fetch
+        try:
+            signal = provider.signal("露营")
+        finally:
+            wx.fetch = original
+        self.assertFalse(signal.ok)
+        self.assertIn("露营装备", signal.error)
+
+    def test_live_signal_shape(self):
+        from keypulse.providers import wechat_index_browser as wx
+        from keypulse.http import Response
+
+        provider = wx.WeChatIndex(_wechat_settings())
+        original = wx.fetch
+        body = {
+            "code": 0,
+            "content": {
+                "resp_list": [
+                    {
+                        "query": "猫粮",
+                        "status": 0,
+                        "indexes": [
+                            {
+                                "time_indexes": [
+                                    {"time": 20261120, "score": 10600000},
+                                    {"time": 20261121, "score": 11121642},
+                                ]
+                            }
+                        ],
+                    }
+                ]
+            },
+        }
+        seen = {}
+
+        def fake_fetch(url, settings, **kwargs):
+            seen["url"] = url
+            seen["headers"] = kwargs.get("headers") or {}
+            seen["body"] = json.loads((kwargs.get("data") or b"{}").decode())
+            return Response(text=json.dumps(body), status=200, url=url)
+
+        wx.fetch = fake_fetch
+        try:
+            signal = provider.signal("猫粮")
+        finally:
+            wx.fetch = original
+
+        self.assertTrue(signal.ok)
+        self.assertEqual(signal.value, 11121642.0)
+        self.assertEqual(signal.detail["prev_day"], 10600000)
+        self.assertEqual(signal.detail["points"], 2)
+        self.assertEqual(seen["url"], "https://search.weixin.qq.com/cgi-bin/wxaweb/wxindex")
+        self.assertIn("X-Request-Sign", seen["headers"])
+        self.assertEqual(seen["body"]["cgi_name"], "GetDefaultIndex")
+
+
+def _wechat_settings():
+    return settings(
+        cache_dir=Path("/tmp/keypulse-wechat-protocol"),
+        wechat_openid="OID",
+        wechat_search_key="KEY",
+    )
+
+
+class WeChatTokenReaderTests(unittest.TestCase):
+    """``keypulse wechat-token`` — reading the login out of WeChat's cache."""
+
+    def _module(self):
+        import importlib.util
+
+        path = Path(__file__).resolve().parents[1] / "scripts" / "wechat-index" / "read_token.py"
+        spec = importlib.util.spec_from_file_location("wx_token", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_reads_the_newest_weapplogin_response(self):
+        import tempfile
+        import time
+
+        module = self._module()
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp) / "webview" / "Cache" / "Cache_Data"
+            directory.mkdir(parents=True)
+            older = directory / "a_0"
+            older.write_bytes(
+                b'1/0/https://search.weixin.qq.com/cgi-bin/searchweb/weapplogin?appid='
+                b'wxsampleappid&js_code=A'
+                b'{"data":{"openid":"OID1","search_key":"1700000000000_111"},"errcode":0}'
+            )
+            newer = directory / "b_0"
+            newer.write_bytes(
+                b'1/0/https://search.weixin.qq.com/cgi-bin/searchweb/weapplogin?appid='
+                b'wxsampleappid&js_code=B'
+                b'{"data":{"openid":"OID2","search_key":"1795313399279300_909998425"},"errcode":0}'
+            )
+            now = time.time()
+            import os
+
+            os.utime(older, (now - 600, now - 600))
+            os.utime(newer, (now, now))
+
+            hits = module.scan(module.profile_dirs(Path(tmp)))
+            self.assertEqual(len(hits), 2)
+            self.assertEqual(hits[0]["openid"], "OID2")
+            self.assertEqual(hits[0]["search_key"], "1795313399279300_909998425")
+
+    def test_ignores_a_session_object_without_a_login_request(self):
+        """An unrelated cache entry must not be mistaken for a login."""
+        import tempfile
+
+        module = self._module()
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp) / "webview" / "Cache" / "Cache_Data"
+            directory.mkdir(parents=True)
+            (directory / "other_0").write_bytes(
+                b'{"openid":"X","search_key":"1700000000000_1"} some other page'
+            )
+            self.assertEqual(module.scan(module.profile_dirs(Path(tmp))), [])
+
+    def test_key_age_uses_the_leading_epoch(self):
+        module = self._module()
+        age = module.key_age_seconds("1795313399279300_909998425", now=1795313399 + 600)
+        self.assertAlmostEqual(age, 600, delta=1)
+        self.assertIsNone(module.key_age_seconds("not-a-key"))

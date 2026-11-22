@@ -146,6 +146,18 @@ class Settings:
                 self.baidu_cookie = load_stored_cookie(self)
             except Exception:  # noqa: BLE001 - never fail startup over credentials
                 self.baidu_cookie = ""
+        # Same rule for the 微信指数 pair: the stored copy from
+        # ``keypulse wechat-token`` fills in only what the environment left
+        # empty, so an explicit export always wins.
+        if not self.wechat_openid or not self.wechat_search_key:
+            try:
+                from .login import load_stored_wechat
+
+                openid, key = load_stored_wechat(self)
+            except Exception:  # noqa: BLE001
+                openid, key = "", ""
+            self.wechat_openid = self.wechat_openid or openid
+            self.wechat_search_key = self.wechat_search_key or key
 
     def ensure_cache_dir(self) -> Path:
         self.cache_dir.mkdir(parents=True, exist_ok=True)

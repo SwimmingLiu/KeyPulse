@@ -1,6 +1,6 @@
 ---
 name: keyword-index
-description: Research keyword search demand and pick the highest-weight keywords. Use when the user asks for 关键词指数 / 关键词权重 / 搜索指数 / 关键词推荐 / keyword research / SEO or GEO keyword selection / "which keywords should I target" / wants keywords derived from a product scenario, or asks to compare keywords by search volume or index. Runs the bundled keypulse CLI (Baidu Index, Google Trends, WeChat/Sogou, Wikipedia and others) and reports a ranked shortlist with the evidence behind each score.
+description: Research keyword search demand and pick the highest-weight keywords. Use when the user asks for 关键词指数 / 关键词权重 / 搜索指数 / 关键词推荐 / keyword research / SEO or GEO keyword selection / "which keywords should I target" / wants keywords derived from a product scenario, or asks to compare keywords by search volume or index. Runs the bundled keypulse CLI (百度指数, Google Trends, 抖音指数, 微信指数, Wikipedia and others) and reports a ranked shortlist with the evidence behind each score.
 allowed-tools: Bash(keypulse *), Bash(bin/keypulse *), Bash(command -v *), Bash(python3 *), Read, Write
 ---
 
@@ -52,7 +52,22 @@ Read the result and set expectations in one short sentence before continuing:
 |---|---|---|
 | `baidu_index` ✗ "需要 KEYPULSE_BAIDU_COOKIE" | No Baidu Index session | 百度指数需要 Cookie；可用 `keypulse login` 配置，或先看其他来源 |
 | `google_trends` ✗ "HTTP 429" | This IP is rate-limited | Google Trends 当前被限流；改用其他来源或稍后重试 |
-| Both ✓ | Real indexes available | 直接用指数排序 |
+| `wechat_index` ✗ "需要 openid + search_key" | No 微信指数 credential yet | 微信指数要一条命令刷新凭据（见下） |
+| `wechat_index` ✗ 凭据失效 | The `search_key` aged out (~1–2h) | 直接重跑 `keypulse wechat-token` 刷新，再扫一次 |
+| All ✓ | Real indexes available | 直接用指数排序 |
+
+微信指数 credentials are read from the WeChat client, so refreshing is one
+command — no proxy, no phone capture:
+
+```bash
+keypulse wechat-token      # macOS; reads openid + search_key from WeChat's cache
+```
+
+It prints how old the key is. If it says the key is over an hour old, the
+mini-program has not logged in recently: tell the user to open 「微信指数」 in
+微信 once, then re-run the command. `wechat_desktop_index` is the
+credential-free fallback (screenshots the open window), so a scan still works
+when the token is stale.
 
 If the user has a Baidu cookie and wants the real 百度指数, tell them once:
 

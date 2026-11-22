@@ -13,7 +13,7 @@ from .baidu_browser import BaiduIndexBrowser
 from .douyin_browser import DouyinIndexBrowser
 from .wechat_browser import SogouWeChatBrowser
 from .wechat_desktop import WeChatDesktopIndex
-from .wechat_index_browser import WeChatIndexBrowser
+from .wechat_index_browser import WeChatIndex
 from .xiaohongshu_browser import XiaohongshuBrowser
 from .base import Provider, Registry
 from .google_trends import GoogleTrends
@@ -61,7 +61,7 @@ def build_registry(settings: Settings) -> Registry:
         BingWeb(settings),
         _prefer_browser(SogouWeChatBrowser, SogouWeChat, settings)(settings),
         DouyinIndexBrowser(settings),
-        WeChatIndexBrowser(settings),
+        WeChatIndex(settings),
         WeChatDesktopIndex(settings),
         XiaohongshuBrowser(settings),
         So360Web(settings),
