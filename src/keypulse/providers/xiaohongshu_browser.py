@@ -47,7 +47,7 @@ READ_SCRIPT = r"""
   while (Date.now() < deadline) {
     const t = document.body.innerText || '';
     if (/请先登录|登录后查看|验证/.test(t) && !document.querySelector('section.note-item')) {
-      return JSON.stringify({ error: '需要登录小红书 / 触发验证' });
+      return JSON.stringify({ error: '需要登录 www.xiaohongshu.com（在浏览器登录后运行 keypulse login --provider xiaohongshu）' });
     }
     if (document.querySelector('section.note-item') || /暂无|没有找到/.test(t)) break;
     await sleep(600);
@@ -113,7 +113,17 @@ class XiaohongshuBrowser(Provider):
         ok, reason = bridge.available()
         if not ok:
             return False, f"需要浏览器桥接：{reason}"
-        return True, "ok (browser bridge; needs a logged-in RED session)"
+        try:
+            from .. import sessions
+
+            state = sessions.recall(self.name, self.settings)
+        except Exception:  # noqa: BLE001
+            state = None
+        if state is not None and state.logged_in is False:
+            return False, "需要登录 www.xiaohongshu.com（keypulse login --provider xiaohongshu）"
+        if state is not None and state.logged_in is True:
+            return True, "ok (browser bridge, 已登录)"
+        return True, "ok (browser bridge; 登录态未确认，可运行 keypulse login)"
 
     def signal(self, keyword: str, region: str = "CN") -> Signal:
         recorded = self._replay(keyword)

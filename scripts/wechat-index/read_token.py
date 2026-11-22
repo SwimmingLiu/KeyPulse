@@ -55,9 +55,9 @@ def profile_dirs(root: Path | None = None) -> list[Path]:
     return found
 
 
-def scan(dirs: list[Path]) -> list[dict]:
-    """All (mtime, openid, search_key, path) found, newest first."""
-    hits: list[dict] = []
+def _cache_files(dirs: list[Path]) -> list[Path]:
+    """Every regular cache file, in no particular order."""
+    files: list[Path] = []
     for directory in dirs:
         try:
             entries = list(directory.iterdir())
@@ -65,28 +65,68 @@ def scan(dirs: list[Path]) -> list[dict]:
             continue
         for entry in entries:
             try:
-                if not entry.is_file() or entry.stat().st_size > 2_000_000:
-                    continue
-                blob = entry.read_bytes()
+                if entry.is_file() and entry.stat().st_size <= 2_000_000:
+                    files.append(entry)
             except OSError:
                 continue
-            # Only the index mini-program's login; other applets run their own
-            # weapplogin against the same host with a different appid.
-            if LOGIN_PATH not in blob:
-                continue
-            match = SESSION_RE.search(blob)
-            if not match:
-                continue
-            hits.append(
-                {
-                    "openid": match.group(1).decode(),
-                    "search_key": match.group(2).decode(),
-                    "cache_file": str(entry),
-                    "mtime": entry.stat().st_mtime,
-                }
-            )
+    return files
+
+
+def _match(entry: Path) -> dict | None:
+    """The login carried by one cache file, if it carries one."""
+    try:
+        blob = entry.read_bytes()
+        mtime = entry.stat().st_mtime
+    except OSError:
+        return None
+    # Only the index mini-program's login; other applets run their own
+    # weapplogin against the same host with a different appid, so an entry
+    # must carry the request *and* the answer.
+    if LOGIN_PATH not in blob:
+        return None
+    match = SESSION_RE.search(blob)
+    if not match:
+        return None
+    return {
+        "openid": match.group(1).decode(),
+        "search_key": match.group(2).decode(),
+        "cache_file": str(entry),
+        "mtime": mtime,
+    }
+
+
+def scan(dirs: list[Path]) -> list[dict]:
+    """All (mtime, openid, search_key, path) found, newest first."""
+    hits = [hit for hit in (_match(entry) for entry in _cache_files(dirs)) if hit]
     hits.sort(key=lambda item: item["mtime"], reverse=True)
     return hits
+
+
+def scan_newest(dirs: list[Path], max_files: int = 0) -> dict | None:
+    """The newest login, reading as few files as possible.
+
+    WeChat keeps ~23k files in these caches and reading all of them costs
+    about 8 seconds.  That is fine once, and ruinous when four parallel
+    keyword workers each do it: every call blew through its timeout and the
+    scan fell back to a stale saved key.  Sorting by mtime is a stat-only
+    pass (~0.06 s), and because the list is newest-first the *first* login
+    encountered is by definition the newest one, so the scan can stop there.
+
+    ``max_files`` bounds the reads; ``0`` means "no bound".  With a bound and
+    no hit inside it, the caller gets ``None`` rather than a slow answer.
+    """
+    files = _cache_files(dirs)
+    try:
+        files.sort(key=lambda entry: entry.stat().st_mtime, reverse=True)
+    except OSError:
+        pass
+    for index, entry in enumerate(files):
+        if max_files and index >= max_files:
+            return None
+        hit = _match(entry)
+        if hit:
+            return hit
+    return None
 
 
 def key_age_seconds(search_key: str, now: float | None = None) -> float | None:
@@ -111,6 +151,17 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--json", action="store_true", help="emit JSON only")
     parser.add_argument("--container", default="", help="override the WeChat container path")
+    parser.add_argument(
+        "--fast",
+        action="store_true",
+        help="newest login only, stopping at the first hit (for the provider's hot path)",
+    )
+    parser.add_argument(
+        "--max-files",
+        type=int,
+        default=400,
+        help="with --fast: how many of the newest cache files to read (default 400)",
+    )
     args = parser.parse_args(argv)
 
     if platform.system() != "Darwin":
@@ -137,7 +188,15 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
-    hits = scan(dirs)
+    # ``--fast`` exists for callers on a hot path (the provider asks before
+    # every scan).  It bounds the reads instead of sweeping the whole cache;
+    # the full sweep is kept for ``keypulse wechat-token``, where reporting
+    # how many logins exist is part of the answer.
+    if args.fast:
+        newest = scan_newest(dirs, max_files=args.max_files)
+        hits = [newest] if newest else []
+    else:
+        hits = scan(dirs)
     if not hits:
         print(
             json.dumps(

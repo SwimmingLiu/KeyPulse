@@ -49,8 +49,25 @@ class Signal:
         return payload
 
     @classmethod
-    def failure(cls, keyword: str, provider: str, metric: str, error: str, *, region: str = "global") -> "Signal":
-        return cls(keyword=keyword, provider=provider, metric=metric, value=0.0, region=region, error=error)
+    def failure(
+        cls,
+        keyword: str,
+        provider: str,
+        metric: str,
+        error: str,
+        *,
+        region: str = "global",
+        detail: dict[str, Any] | None = None,
+    ) -> "Signal":
+        return cls(
+            keyword=keyword,
+            provider=provider,
+            metric=metric,
+            value=0.0,
+            region=region,
+            error=error,
+            detail=detail or {},
+        )
 
 
 @dataclass

@@ -8,7 +8,7 @@ providers over many keywords and one blocked source must not sink the run.
 
 from __future__ import annotations
 
-from typing import Iterable, Sequence
+from typing import Any, Iterable, Sequence
 
 import json
 from pathlib import Path
@@ -127,8 +127,17 @@ class Provider:
         return []
 
     # -- helpers ----------------------------------------------------------
-    def _failure(self, keyword: str, error: str, region: str = "GLOBAL") -> Signal:
-        return Signal.failure(keyword, self.name, self.metric, error, region=normalise_region(region))
+    def _failure(
+        self,
+        keyword: str,
+        error: str,
+        region: str = "GLOBAL",
+        *,
+        detail: dict[str, Any] | None = None,
+    ) -> Signal:
+        return Signal.failure(
+            keyword, self.name, self.metric, error, region=normalise_region(region), detail=detail
+        )
 
 
 class Registry:

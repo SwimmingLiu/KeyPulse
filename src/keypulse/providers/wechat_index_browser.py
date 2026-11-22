@@ -11,6 +11,9 @@ The protocol was recovered by unpacking the mini-program itself
 * body — ``{"openid": …, "search_key": …, "cgi_name": "GetDefaultIndex",
   "query": ["关键词", …], "compound_word": [], "start_ymd": "YYYYMMDD",
   "end_ymd": "YYYYMMDD", "is_beta": 1}``
+  — the dates are **strings**; integers are parsed fine and then rejected
+  by the service as ``code -10004`` ("process failed"), which reads like an
+  auth failure and is not one.
 * signature — header ``X-Request-Sign`` = ``md5(search_key + query.join(""))``
   (``cgi/cgi.js``: ``p([t,r].join("")).toString()`` with ``r = query.join("")``)
 * response — ``{code: 0, content: {resp_list: [{query, status,
@@ -22,11 +25,17 @@ Credentials come from ``weapplogin``, which the mini-program calls on launch::
     POST /cgi-bin/searchweb/weapplogin  {appid, js_code}   (wx.login code)
     -> {"data": {"openid": "...", "search_key": "..."}, "errcode": 0}
 
-``search_key`` is short-lived (it embeds a millisecond timestamp and the
-server rejects it after roughly an hour or two), so an expired key is
-reported as "需要刷新" rather than as a network failure — retrying such a key
-is pointless.  ``scripts/wechat-index/` reads the key straight out of the
+``search_key`` is short-lived (measured: about 30 minutes), so an expired key
+is reported as "需要刷新" rather than as a network failure — retrying such a
+key is pointless.  ``scripts/wechat-index/`` reads the key straight out of the
 WeChat client's own webview cache, so refreshing is one command.
+
+Expiry renews itself: ``cgi/cgi.js`` treats ``code -10000`` as "the server
+says my session expired", runs ``wx.login`` + ``weapplogin`` and retries, so
+opening the mini-program after an expiry mints a fresh key with no login by
+the user.  It skips that path only when ``third_session`` is already in its
+storage — hence "reopen" can yield nothing while "launch after expiry" always
+yields a key.
 """
 
 from __future__ import annotations
@@ -35,6 +44,7 @@ import hashlib
 import json
 import subprocess
 import sys
+import threading
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -60,19 +70,51 @@ def _token_script() -> Path:
     return Path(__file__).resolve().parents[3] / "scripts" / "wechat-index" / "read_token.py"
 
 
-def _newest_cached() -> tuple[str, str, str] | None:
+#: The cache is read at most this often, however many keywords are in flight.
+#: A full sweep of WeChat's ~23k cache files costs ~8 s, and four parallel
+#: workers each doing it timed out and fell back to a stale key — the bug that
+#: made "open the mini-program, then scan" still report 凭据失效.
+CACHE_TTL_SECONDS = 20.0
+
+_cache_lock = threading.Lock()
+_cache_at = 0.0
+_cache_value: tuple[str, str, str] | None = None
+
+
+def _newest_cached(force: bool = False) -> tuple[str, str, str] | None:
     """Newest ``(openid, search_key, captured_at)`` from WeChat's own cache.
 
     Returns ``None`` on any problem — a missing script, a non-macOS machine,
     a cache that has never held a login.  Being able to fall back to the saved
     credential matters more than knowing why this failed.
+
+    Results are memoised for ``CACHE_TTL_SECONDS`` and the read is serialised,
+    so a scan with N workers costs one cache read rather than N concurrent
+    ones.  The TTL is short on purpose: the whole point of reading the cache
+    is to notice a key the client minted a minute ago.
     """
+    global _cache_at, _cache_value
+
     script = _token_script()
     if not script.exists():
         return None
+    if not force and _cache_value is not None and (time.time() - _cache_at) < CACHE_TTL_SECONDS:
+        return _cache_value
+    with _cache_lock:
+        # Another worker may have refreshed it while we waited for the lock.
+        if not force and _cache_value is not None and (time.time() - _cache_at) < CACHE_TTL_SECONDS:
+            return _cache_value
+        payload = _run_token_script(script)
+        _cache_at = time.time()
+        if payload is not None:
+            _cache_value = payload
+        return payload
+
+
+def _run_token_script(script: Path) -> tuple[str, str, str] | None:
     try:
         proc = subprocess.run(
-            [sys.executable, str(script), "--json"],
+            [sys.executable, str(script), "--json", "--fast"],
             capture_output=True,
             text=True,
             timeout=25,
@@ -244,7 +286,16 @@ class WeChatIndex(Provider):
                 "缺少 openid / search_key（运行 keypulse wechat-token 从微信客户端读取）",
                 region,
             )
-        return self._one(keyword, region, openid, key)
+        signal = self._one(keyword, region, openid, key)
+        # A rejected key usually means the client minted a new one while this
+        # scan was running (the mini-program retries login by itself).  Look
+        # once more, deliberately bypassing the memo, and retry with anything
+        # newer rather than reporting a dead credential that is already fixed.
+        if signal.detail.get("auth_failed"):
+            live = _newest_cached(force=True)
+            if live and live[1] != key:
+                return self._one(keyword, region, live[0], live[1])
+        return signal
 
     def _one(self, keyword: str, region: str, openid: str, key: str) -> Signal:
         end = _today()
@@ -285,7 +336,9 @@ class WeChatIndex(Provider):
         if code in (0, None) and not payload.get("content"):
             return self._failure(keyword, "响应里没有 content", region)
         if code == -10000:
-            return self._failure(keyword, _auth_help(key), region)
+            return self._failure(
+                keyword, _auth_help(key), region, detail={"auth_failed": True}
+            )
         if code == -10002:
             # The CGI answers -10002 with an empty resp_list for an
             # unindexed word, which is a result, not an error.
@@ -304,7 +357,10 @@ class WeChatIndex(Provider):
             )
         if code not in (0, -10002):
             return self._failure(
-                keyword, f"微信指数返回 code {code}: {payload.get('msg', '')}", region
+                keyword,
+                f"微信指数返回 code {code}: {payload.get('msg', '')}",
+                region,
+                detail={"auth_failed": code == -10004},
             )
 
         latest, series, answered = parse_latest(payload.get("content") or {})

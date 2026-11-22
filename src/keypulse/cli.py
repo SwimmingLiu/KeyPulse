@@ -80,9 +80,28 @@ def build_parser() -> argparse.ArgumentParser:
     doctor.add_argument("--offline", action="store_true")
     doctor.set_defaults(func=cmd_doctor)
 
-    login = sub.add_parser("login", help="store a Baidu Index cookie / show setup instructions")
-    login.add_argument("--baidu-cookie", default="", help="the cookie string copied from index.baidu.com")
-    login.add_argument("--clear", action="store_true", help="forget the stored cookie")
+    login = sub.add_parser(
+        "login",
+        help="show which sources need a login, and fetch the credential where possible",
+    )
+    login.add_argument(
+        "--provider",
+        default="",
+        help="comma-separated: baidu, douyin, xiaohongshu, wechat (default: show status)",
+    )
+    login.add_argument(
+        "--open",
+        action="store_true",
+        help="open the login page in the bridge browser for sources that are not logged in",
+    )
+    login.add_argument("--baidu-cookie", default="", help="paste the cookie string from index.baidu.com")
+    login.add_argument(
+        "--restart-client",
+        action="store_true",
+        help="with --provider wechat: restart WeChat if opening the mini-program fails (closes the app)",
+    )
+    login.add_argument("--clear", action="store_true", help="forget all stored credentials")
+    login.add_argument("--json", action="store_true", help="emit the status table as JSON")
     login.set_defaults(func=cmd_login)
 
     wechat_token = sub.add_parser(

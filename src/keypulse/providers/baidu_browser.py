@@ -83,7 +83,19 @@ class BaiduIndexBrowser(Provider):
             return True, "ok (replay)"
         ok, reason = bridge.available()
         if not ok:
+            if self.settings.baidu_cookie:
+                return True, "ok (Cookie)"
             return False, f"需要浏览器桥接：{reason}"
+        try:
+            from .. import sessions
+
+            state = sessions.recall(self.name, self.settings)
+        except Exception:  # noqa: BLE001
+            state = None
+        if state is not None and state.logged_in is False:
+            return False, "需要登录 index.baidu.com（keypulse login --provider baidu）"
+        if state is not None and state.logged_in is True:
+            return True, "ok (browser bridge, 已登录)"
         return True, "ok (browser bridge)"
 
     def signal(self, keyword: str, region: str = "CN") -> Signal:
