@@ -79,11 +79,14 @@ class WeChatDesktopIndex(Provider):
             return False, str(probe.get("error") or probe["blocker"])
         return True, "ok (desktop window)"
 
-    def _run_script(self) -> dict:
+    def _run_script(self, keyword: str = "") -> dict:
         script = script_path()
+        argv = ["python3", str(script), "--json"]
+        if keyword:
+            argv += ["--keyword", keyword]
         try:
             proc = subprocess.run(
-                ["python3", str(script), "--json"],
+                argv,
                 capture_output=True,
                 text=True,
                 timeout=max(45.0, self.settings.timeout * 3),
@@ -108,7 +111,7 @@ class WeChatDesktopIndex(Provider):
         if not ok:
             return self._failure(keyword, reason, region)
 
-        payload = self._run_script()
+        payload = self._run_script(keyword)
         if payload.get("blocker"):
             return self._failure(keyword, str(payload.get("error") or payload["blocker"]), region)
         if payload.get("unindexed"):
@@ -125,9 +128,17 @@ class WeChatDesktopIndex(Provider):
                     "transport": "desktop-ocr",
                 },
             )
-        value = payload.get("index")
+        # Only this keyword's own row counts.  The window also lists 浏览历史
+        # rows for other terms; falling back to "the big number on screen"
+        # would report one keyword's index for another.
+        match = payload.get("match") or {}
+        value = match.get("index")
         if value is None:
-            return self._failure(keyword, "OCR 没有读到指数数字", region)
+            return self._failure(
+                keyword,
+                payload.get("note") or "窗口里没有该关键词的行（先在微信指数里搜一次该词）",
+                region,
+            )
         return Signal(
             keyword=keyword,
             provider=self.name,
@@ -136,7 +147,7 @@ class WeChatDesktopIndex(Provider):
             unit=self.unit,
             region=normalise_region(region),
             detail={
-                "pct": payload.get("pct"),
+                "pct": match.get("pct"),
                 "date": payload.get("date"),
                 "text": payload.get("text"),
                 "note": "从微信桌面客户端的「微信指数」窗口读取",

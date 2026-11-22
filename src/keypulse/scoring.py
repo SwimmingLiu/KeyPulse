@@ -103,6 +103,11 @@ LOG_CEILINGS: Mapping[str, float] = {
     # 人工智能 8.4万, a niche term in the low thousands. Ceiling at 200万 keeps
     # the top of the real range off 100 so the scale still discriminates.
     "douyin_index": 2_000_000,
+    # 微信指数 runs to the tens of millions for national topics and a few
+    # thousand for niche ones; 3000万 keeps mainstream keywords off the 100
+    # ceiling so the scale still separates them.
+    "wechat_index": 30_000_000,
+    "wechat_desktop_index": 30_000_000,
     "hn_mentions": 10_000,              # matching HN stories
     "github_repos": 100_000,            # matching repos
     "bing_web": 20_000_000,             # SERP result count

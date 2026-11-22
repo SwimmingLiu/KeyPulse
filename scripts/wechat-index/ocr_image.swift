@@ -40,7 +40,11 @@ for observation in request.results ?? [] {
 }
 lines.sort { $0.y < $1.y }
 
+// A typed result rather than a mixed dictionary literal: Swift cannot infer a
+// generic Value for ["ok": Bool, "lines": [Line]].
+struct OCRResult: Codable { let ok: Bool; let lines: [Line] }
+
 let encoder = JSONEncoder()
 encoder.outputFormatting = [.withoutEscapingSlashes]
-let payload = try encoder.encode(["ok": true, "lines": lines])
+let payload = try encoder.encode(OCRResult(ok: true, lines: lines))
 FileHandle.standardOutput.write(payload)

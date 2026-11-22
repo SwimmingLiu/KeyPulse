@@ -1221,3 +1221,52 @@ class NewIndexProviderTests(unittest.TestCase):
         url = SEARCH_URL + urllib.parse.quote("露营 装备")
         self.assertIn("%E9%9C%B2%E8%90%A5", url)
         self.assertNotIn(" ", url)
+
+
+class WeChatDesktopParseTests(unittest.TestCase):
+    """The desktop window lists several keywords; never mix their numbers."""
+
+    #: Verbatim OCR fragments from a real capture (y = normalised position).
+    LINES = [
+        {"text": "浏览历史", "y": 0.648, "confidence": 1.0},
+        {"text": "14.18%『", "y": 0.6512, "confidence": 1.0},
+        {"text": "行测分", "y": 0.6513, "confidence": 1.0},
+        {"text": "2,131", "y": 0.6533, "confidence": 1.0},
+        {"text": "行测估分", "y": 0.6940, "confidence": 1.0},
+        {"text": "7.13%", "y": 0.6940, "confidence": 1.0},
+        {"text": "1,367", "y": 0.6963, "confidence": 1.0},
+        {"text": "行测", "y": 0.7624, "confidence": 1.0},
+        {"text": "1.38%", "y": 0.7631, "confidence": 1.0},
+        {"text": "3,551,726", "y": 0.7645, "confidence": 1.0},
+    ]
+
+    def _parse(self):
+        import importlib.util
+        from pathlib import Path
+
+        path = Path(__file__).resolve().parents[1] / "scripts" / "wechat-index" / "read_window.py"
+        spec = importlib.util.spec_from_file_location("wx_read_window", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_rows_are_keyed_by_their_own_label(self):
+        entries = self._parse().parse(self.LINES)["entries"]
+        self.assertEqual(entries["行测"]["index"], 3551726)
+        self.assertEqual(entries["行测分"]["index"], 2131)
+        self.assertEqual(entries["行测估分"]["index"], 1367)
+
+    def test_percentages_follow_their_own_row(self):
+        entries = self._parse().parse(self.LINES)["entries"]
+        self.assertEqual(entries["行测"]["pct"], "1.38%")
+        self.assertEqual(entries["行测分"]["pct"], "14.18%")
+
+    def test_prefix_keyword_is_not_confused_with_a_longer_one(self):
+        """行测 must not resolve to 行测分 — the regression this guards."""
+        entries = self._parse().parse(self.LINES)["entries"]
+        self.assertNotEqual(entries["行测"]["index"], entries["行测分"]["index"])
+
+    def test_unindexed_and_empty_markers(self):
+        parse = self._parse().parse
+        self.assertTrue(parse([{"text": "微信指数未收录该词", "y": 0.1}]).get("unindexed"))
+        self.assertTrue(parse([{"text": "暂无数据", "y": 0.1}]).get("no_data"))
