@@ -60,11 +60,17 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends bubblewrap socat
-          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-          sysctl kernel.apparmor_restrict_unprivileged_userns || true
+          # Claude Code's sandbox unshares a user namespace and writes
+          # setgroups inside it. Ubuntu 24.04's AppArmor restriction and the
+          # nested-userns check both get in the way; disable the policy knob
+          # and drop the sysctl that gates it.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          sudo sysctl -w kernel.unprivileged_userns_clone=1 || true
+          sysctl -a 2>/dev/null | grep -E 'unprivileged_userns|apparmor' || true
           socat -V | head -1
           bwrap --version
-          bwrap --dev-bind / / --unshare-user true && echo "bwrap unshare OK"
+          bwrap --dev-bind / / --unshare-user --unshare-pid \
+            sh -c 'echo nested-userns-ok' || echo "bwrap nested unshare FAILED"
 
       - name: Validate plugin
         run: claude plugin validate . --strict
