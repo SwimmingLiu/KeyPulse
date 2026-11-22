@@ -78,6 +78,11 @@ Two details that took measurement to find:
 - Navigate to the trend URL; do **not** type into the search box. Typing fires
   an in-app route change that destroys the JS execution context mid-call
   (`Inspected target navigated or closed`).
+- Every keyword needs a **unique query string** (`?t=<ms>#/trend/…`), not just
+  a new fragment. Changing only the hash keeps the same document:
+  `readyState` is already `complete`, the router does not re-fetch, and the
+  read times out on the previous keyword's page — so only the first keyword of
+  a batch works. With the cache-buster it is 0.8 s per keyword.
 - Loopback debug endpoints must bypass `*_proxy`. With a system proxy set,
   `urllib` sends `127.0.0.1` through it and the connection comes back 502.
 
@@ -342,7 +347,7 @@ The full algorithm and its calibration notes are in
 ## Development
 
 ```bash
-python3 -m unittest discover -s tests -v    # 145 tests, no network required
+python3 -m unittest discover -s tests -v    # 147 tests, no network required
 python evals/fixtures/verify_recording.py   # eval fixtures are usable
 claude plugin validate .                    # manifest + component checks
 ```

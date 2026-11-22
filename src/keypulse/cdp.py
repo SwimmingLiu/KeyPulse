@@ -424,8 +424,18 @@ class Session:
         self.call("Network.setCookies", {"cookies": cookies}, timeout=30)
         return len(cookies)
 
-    def navigate(self, url: str) -> None:
-        self.call("Page.navigate", {"url": url}, timeout=45)
+    def navigate(self, url: str, *, wait: bool = True, timeout: float = 45.0) -> None:
+        """Load ``url`` and (by default) wait for ``readyState === 'complete'``.
+
+        ``readyState`` alone is not enough for a hash-routed SPA: changing only
+        the fragment keeps the same document, so ``complete`` is already true
+        and the router may not have fetched anything yet.  Callers that read a
+        hash URL therefore poll for their own content; this only guarantees the
+        document is there to poll in.
+        """
+        self.call("Page.navigate", {"url": url}, timeout=timeout)
+        if not wait:
+            return
         deadline = time.time() + 30
         while time.time() < deadline:
             try:
@@ -435,6 +445,22 @@ class Session:
                 continue
             if state == "complete":
                 return
+            time.sleep(0.3)
+
+    def reload(self) -> None:
+        """Hard-reload the current document.
+
+        Used between keywords: a hash change on an already-loaded SPA does not
+        reliably re-run the page's data fetch, and a reload does.
+        """
+        self.call("Page.reload", {"ignoreCache": False}, timeout=45)
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            try:
+                if self.evaluate("document.readyState", await_promise=False) == "complete":
+                    return
+            except CDPError:
+                pass
             time.sleep(0.3)
 
     def evaluate(self, expression: str, *, await_promise: bool = True, timeout: float = 90.0) -> Any:
