@@ -31,7 +31,7 @@
   <rect width="1680" height="1092" fill="#f3f6fa"/>
   <text class="title" x="32" y="52">KeyPulse 架构</text>
   <text class="subtitle" x="33" y="78">Claude Code 插件与 Python CLI 共用关键词测量流程</text>
-  <text class="code" x="1648" y="53" text-anchor="end">main / d489cdd</text>
+  <text class="code" x="1648" y="53" text-anchor="end">main / 3d9fab7</text>
 
   <g aria-label="命令入口">
     <rect class="panel" x="30" y="102" width="1620" height="166" rx="14"/>
@@ -123,12 +123,12 @@
 
     <rect class="data" x="52" y="608" width="284" height="101" rx="10"/>
     <text class="heading" x="69" y="634">搜索指数 · index</text>
-    <text class="code" x="69" y="658">baidu_index</text>
-    <text class="code" x="69" y="681">google_trends</text>
+    <text class="detail" x="69" y="658">百度搜索指数 · baidu_index</text>
+    <text class="detail" x="69" y="681">Google Trends · google_trends</text>
 
     <rect class="data" x="375" y="608" width="284" height="101" rx="10"/>
     <text class="heading" x="392" y="634">内容量代理 · fallback</text>
-    <text class="code" x="392" y="657">sogou_wechat</text>
+    <text class="detail" x="392" y="657">搜狗微信文章数 · sogou_wechat</text>
     <text class="code" x="392" y="677">wikipedia_pageviews</text>
     <text class="code" x="392" y="697">wikipedia_search</text>
 
@@ -190,7 +190,7 @@
     <rect class="card" x="1111" y="955" width="517" height="88" rx="10"/>
     <text class="heading" x="1128" y="981">Fixture · 预置离线数据</text>
     <text class="code" x="1128" y="1005">recording JSON → .keypulse.json + replay-*.json</text>
-    <text class="detail" x="1128" y="1027">smoke / eval 使用同一个真实 CLI</text>
+    <text class="detail" x="1128" y="1027">smoke / eval 复用 CLI · eval 提供 ./keypulse</text>
 
     <path class="rail call" d="M 1369 955 V 864"/>
   </g>
