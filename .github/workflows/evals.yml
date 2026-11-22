@@ -86,12 +86,19 @@ jobs:
             --allow-tools Bash Read Grep Glob Skill \
             --ablation none --runs 1 --threshold 0.8 \
             --json evals/results/aggregate.json \
-            --output-dir evals/results
+            --output-dir evals/results \
+            --keep-temp
 
-      - name: Upload eval report
+      - name: Upload eval report and traces
         if: always()
         uses: actions/upload-artifact@v4
         with:
+          # Temps are kept so a failing grader can be diagnosed from the
+          # model's actual output instead of guessed at.
           name: eval-results
-          path: evals/results
+          path: |
+            evals/results
+            /tmp/claude-eval-*
+            /tmp/e-*
           if-no-files-found: warn
+          include-hidden-files: true
