@@ -69,6 +69,28 @@ jobs:
       - name: Validate plugin
         run: claude plugin validate . --strict
 
+      - name: Configure the eval sandbox for nested user namespaces
+        # Even with bubblewrap present and AppArmor relaxed, Claude Code's own
+        # sandbox starts bash inside a user namespace whose `setgroups` write
+        # needs CAP_SYS_ADMIN:
+        #
+        #   apply-seccomp: write /proc/self/setgroups (nested userns is
+        #   capability-restricted; caller must provide CAP_SYS_ADMIN)
+        #
+        # allowNestedUserNamespaces is the setting for environments where the
+        # sandboxed command itself may create a namespace (Docker, nested
+        # bwrap). It only affects this CI sandbox, not the plugin.
+        run: |
+          mkdir -p .claude
+          python3 - <<'PY'
+          import json, pathlib
+          path = pathlib.Path(".claude/settings.json")
+          data = json.loads(path.read_text()) if path.exists() else {}
+          data.setdefault("sandbox", {})["allowNestedUserNamespaces"] = True
+          path.write_text(json.dumps(data, indent=2) + "\n")
+          print(path.read_text())
+          PY
+
       - name: Check replay recordings
         # Cases replay recorded provider values, so the suite needs no network
         # and no browser. This asserts each case still ships a usable recording.
