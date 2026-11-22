@@ -3,35 +3,39 @@ name: evals
 # Runs the plugin eval suite (`claude plugin eval`). These are real model calls,
 # so the job is opt-in: on a schedule, or by manual dispatch.
 #
-# Either credential works, as a repository secret:
-#   ANTHROPIC_API_KEY        a paid API key
-#   CLAUDE_CODE_OAUTH_TOKEN  a Claude subscription token from `claude setup-token`
+# Credential: one repository secret, EVAL_ANTHROPIC_KEY, holding an
+# Anthropic-protocol key for whatever upstream EVAL_ANTHROPIC_BASE_URL names.
+# The workflow itself just points Claude Code at that upstream — no local
+# gateway, which a runner could never reach.
 #
-# A missing credential FAILS this job instead of reporting success. A green run
-# here means the suite actually executed; "nothing ran" must never look like a
-# pass.
+# A missing secret FAILS this job instead of reporting success. A green run
+# here means the suite actually executed; "nothing ran" must never look like
+# a pass.
 on:
   workflow_dispatch:
   schedule:
     - cron: "0 3 * * 1"   # Mondays 03:00 UTC
+
+env:
+  # Evaluated once per workflow run; every step sees the same upstream.
+  EVAL_MODEL: deepseek-v4-1-flash-1017
+  EVAL_BASE_URL: https://betteryou.top
 
 jobs:
   evals:
     name: plugin evals
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    env:
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
     steps:
-      - name: Require a credential
+      - name: Require EVAL_ANTHROPIC_KEY
+        env:
+          KEY: ${{ secrets.EVAL_ANTHROPIC_KEY }}
         run: |
-          if [ -n "$ANTHROPIC_API_KEY" ] || [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
+          if [ -n "$KEY" ]; then
             exit 0
           fi
-          echo "::error::No eval credential is configured. Add one of:"
-          echo "::error::  gh secret set ANTHROPIC_API_KEY -R $GITHUB_REPOSITORY"
-          echo "::error::  gh secret set CLAUDE_CODE_OAUTH_TOKEN -R $GITHUB_REPOSITORY  # from: claude setup-token"
+          echo "::error::EVAL_ANTHROPIC_KEY is not set. Add the eval key with:"
+          echo "::error::  gh secret set EVAL_ANTHROPIC_KEY -R $GITHUB_REPOSITORY"
           exit 1
 
       - uses: actions/checkout@v4
@@ -52,14 +56,24 @@ jobs:
         run: python evals/fixtures/verify_recording.py
 
       - name: Run eval suite
-        # Bash is needed for the CLI; Skill must be granted or the agent cannot
-        # load the plugin skill in this sandbox. 0.8 lets one grader miss.
+        env:
+          # Point every model tier at the upstream and clear the Anthropic
+          # defaults, so an unset secret can never silently fall back to a
+          # hosted account. Bash is needed for the CLI; Skill must be granted
+          # or the agent cannot load the plugin skill in this sandbox. 0.8
+          # lets one grader miss.
+          ANTHROPIC_API_KEY: ""
+          ANTHROPIC_AUTH_TOKEN: ${{ secrets.EVAL_ANTHROPIC_KEY }}
+          ANTHROPIC_BASE_URL: ${{ env.EVAL_BASE_URL }}
+          ANTHROPIC_DEFAULT_HAIKU_MODEL: ${{ env.EVAL_MODEL }}
+          ANTHROPIC_DEFAULT_SONNET_MODEL: ${{ env.EVAL_MODEL }}
+          ANTHROPIC_DEFAULT_OPUS_MODEL: ${{ env.EVAL_MODEL }}
+          ANTHROPIC_SMALL_FAST_MODEL: ${{ env.EVAL_MODEL }}
         run: |
           claude plugin eval . \
             --trust-plugin --no-publish --scaffold \
             --allow-tools Bash Read Grep Glob Skill \
             --ablation none --runs 1 --threshold 0.8 \
-            --judge-model claude-haiku-4-5 \
             --json evals/results/aggregate.json \
             --output-dir evals/results
 

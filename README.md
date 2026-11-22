@@ -290,18 +290,27 @@ python evals/fixtures/verify_recording.py
 
 CI runs unit tests and manifest validation on every push
 (`.github/workflows/tests.yml`) and the eval suite on a schedule or on demand
-(`.github/workflows/evals.yml`). The eval job needs one credential as a
-repository secret — either `ANTHROPIC_API_KEY` (paid API key) or
-`CLAUDE_CODE_OAUTH_TOKEN` (a subscription token from `claude setup-token`). If
-neither is set the job **fails** with the command to add one, so a green check
-always means the suite really ran:
+(`.github/workflows/evals.yml`). The eval job runs against any
+Anthropic-protocol upstream: set `EVAL_ANTHROPIC_KEY` to that upstream's key
+and, if it is not the default `https://betteryou.top`, edit `EVAL_BASE_URL` in
+the workflow. If the secret is unset the job **fails** with the command to add
+it, so a green check always means the suite really ran:
 
 ```bash
-# subscription instead of a paid key
-claude setup-token
-gh secret set CLAUDE_CODE_OAUTH_TOKEN -R SwimmingLiu/KeyPulse
-
+gh secret set EVAL_ANTHROPIC_KEY -R SwimmingLiu/KeyPulse
 gh workflow run evals.yml
+```
+
+To run the same suite locally against that upstream, mirror what the workflow
+sets — the point is that no local gateway is involved:
+
+```bash
+export ANTHROPIC_BASE_URL=https://betteryou.top \
+       ANTHROPIC_AUTH_TOKEN=<key> \
+       ANTHROPIC_DEFAULT_HAIKU_MODEL=deepseek-v4-1-flash-1017 \
+       ANTHROPIC_DEFAULT_SONNET_MODEL=deepseek-v4-1-flash-1017 \
+       ANTHROPIC_DEFAULT_OPUS_MODEL=deepseek-v4-1-flash-1017
+unset ANTHROPIC_API_KEY
 ```
 
 ## Notes on the data sources
