@@ -10,7 +10,8 @@ request carries three things that only the WeChat client can mint:
 
 * ``openid`` — the mini-program openid of the account that opened 微信指数;
 * ``search_key`` — a short-lived token (minutes to ~24h);
-* a ``Referer`` naming the mini-program appid, ``wxMINIPROGRAMAPPID``.
+* a ``Referer`` naming the mini-program's appid — the browser sets this
+  itself for a same-origin fetch, so nothing about it is needed here.
 
 ``index.weixin.qq.com`` does not exist (NXDOMAIN); there is no web endpoint to
 fall back on.  Credentials come from capturing one request from the WeChat
@@ -40,8 +41,6 @@ from .base import Provider, normalise_region
 SESSION = "keypulse-wechat-index"
 HOST = "https://search.weixin.qq.com"
 PATH = "/cgi-bin/searchweb/wxindex/querywxindexgroup"
-APPID = "wxMINIPROGRAMAPPID"
-
 #: Fetches one keyword. ``__PARAMS__`` is a JSON object substituted below.
 #: Runs inside the mini-program's own page so the Referer and any cookies the
 #: client set are present.
