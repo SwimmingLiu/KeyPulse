@@ -21,7 +21,7 @@ from . import __version__
 from .config import Settings
 from .expand import add_modifiers, detect_language, expand, suggest_seeds
 from .doctor import cmd_doctor
-from .login import cmd_login, cmd_wechat_token
+from .login import cmd_login, cmd_wechat_open, cmd_wechat_token
 from .providers import build_registry
 from .render import render_json, render_leaders, render_markdown, render_table
 from .scan import ScanRequest, describe_provider_health, run_scan
@@ -92,6 +92,13 @@ def build_parser() -> argparse.ArgumentParser:
     wechat_token.add_argument("--clear", action="store_true", help="forget the stored credentials")
     wechat_token.add_argument("--container", default="", help="override the WeChat container path")
     wechat_token.set_defaults(func=cmd_wechat_token)
+
+    wechat_open = sub.add_parser(
+        "wechat-open",
+        help="open the 微信指数 mini-program (macOS; refreshes the login)",
+    )
+    wechat_open.add_argument("--json", action="store_true", help="emit JSON only")
+    wechat_open.set_defaults(func=cmd_wechat_open)
 
     providers = sub.add_parser("providers", help="list providers and their availability")
     providers.add_argument("--region", "-r", default="GLOBAL")

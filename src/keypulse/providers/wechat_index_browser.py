@@ -33,8 +33,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
+import sys
 import time
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from ..http import FetchError, fetch
 from ..models import Signal
@@ -50,6 +53,47 @@ LOOKBACK_DAYS = 30
 
 def _today() -> datetime:
     return datetime.now()
+
+
+def _token_script() -> Path:
+    """``scripts/wechat-index/read_token.py`` in the install tree."""
+    return Path(__file__).resolve().parents[3] / "scripts" / "wechat-index" / "read_token.py"
+
+
+def _newest_cached() -> tuple[str, str, str] | None:
+    """Newest ``(openid, search_key, captured_at)`` from WeChat's own cache.
+
+    Returns ``None`` on any problem — a missing script, a non-macOS machine,
+    a cache that has never held a login.  Being able to fall back to the saved
+    credential matters more than knowing why this failed.
+    """
+    script = _token_script()
+    if not script.exists():
+        return None
+    try:
+        proc = subprocess.run(
+            [sys.executable, str(script), "--json"],
+            capture_output=True,
+            text=True,
+            timeout=25,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    for line in (proc.stdout or "").splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            payload = json.loads(line)
+        except ValueError:
+            continue
+        if payload.get("ok") and payload.get("openid") and payload.get("search_key"):
+            return (
+                str(payload["openid"]),
+                str(payload["search_key"]),
+                str(payload.get("captured_at") or ""),
+            )
+    return None
 
 
 def request_sign(search_key: str, queries: list[str]) -> str:
@@ -109,6 +153,33 @@ def parse_latest(content: dict) -> tuple[int | None, list[float], str]:
     return int(series[-1]), series, query
 
 
+def _auth_help(search_key: str) -> str:
+    """Explain an ``auth failed`` by age, because that is what it means.
+
+    Measured: a key minted at 22:51 still answered at 23:20 and was rejected
+    at 23:22 — roughly 30 minutes, not the "1–2 hours" the docs used to say.
+    Telling the user *how old* the key is separates "wait for the client to
+    log in again" from "the credential is simply wrong".
+    """
+    age_min: int | None = None
+    if search_key:
+        stamp = search_key.split("_", 1)[0][:10]
+        if stamp.isdigit():
+            age_min = max(0, int((time.time() - int(stamp)) / 60))
+    if age_min is None:
+        return "微信指数凭据失效（auth failed）：运行 keypulse wechat-token 刷新 search_key"
+    if age_min >= 30:
+        return (
+            f"微信指数凭据失效（auth failed，这个 key 已签发 {age_min} 分钟，"
+            "有效期约 30 分钟）：在微信搜索框输入「微信指数」把它打开一次，"
+            "再运行 keypulse wechat-token"
+        )
+    return (
+        f"微信指数凭据失效（auth failed，但 key 只有 {age_min} 分钟）："
+        "可能是微信刚刚重新登录换了 key——重跑 keypulse wechat-token 取最新那条"
+    )
+
+
 class WeChatIndex(Provider):
     name = "wechat_index"
     label = "微信指数"
@@ -122,11 +193,31 @@ class WeChatIndex(Provider):
 
     # -- credentials ------------------------------------------------------
     def _credentials(self) -> tuple[str, str]:
-        settings = self.settings
-        return (
-            getattr(settings, "wechat_openid", "") or "",
-            getattr(settings, "wechat_search_key", "") or "",
+        """The newest key WeChat has minted, preferring the live cache.
+
+        A ``search_key`` lives about 30 minutes (measured: minted 22:51,
+        still serving at 23:20, rejected at 23:22).  A copy saved by
+        ``keypulse wechat-token`` is therefore stale almost immediately, and
+        reading it on the next scan is what turned a working key into
+        "auth failed".  So the cache is consulted first on every call: if the
+        client logged in since the saved copy, that key is used and the saved
+        one is only a fallback for machines where the cache is unreadable.
+        """
+        saved = (
+            getattr(self.settings, "wechat_openid", "") or "",
+            getattr(self.settings, "wechat_search_key", "") or "",
         )
+        live = _newest_cached() if getattr(self.settings, "wechat_live_cache", True) else None
+        if live and (not saved[1] or live[1] != saved[1]):
+            # Remember it so ``keypulse providers`` and later calls agree.
+            try:
+                from ..login import save_wechat
+
+                save_wechat(self.settings, live[0], live[1], captured_at=live[2])
+            except Exception:  # noqa: BLE001 - never fail a scan over bookkeeping
+                pass
+            return live[0], live[1]
+        return saved
 
     def check(self) -> tuple[bool, str]:
         try:
@@ -194,11 +285,7 @@ class WeChatIndex(Provider):
         if code in (0, None) and not payload.get("content"):
             return self._failure(keyword, "响应里没有 content", region)
         if code == -10000:
-            return self._failure(
-                keyword,
-                "微信指数凭据失效（auth failed）：运行 keypulse wechat-token 刷新 search_key",
-                region,
-            )
+            return self._failure(keyword, _auth_help(key), region)
         if code == -10002:
             # The CGI answers -10002 with an empty resp_list for an
             # unindexed word, which is a result, not an error.

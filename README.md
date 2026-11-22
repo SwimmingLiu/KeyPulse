@@ -45,7 +45,7 @@ from the WeChat client itself:
 | 百度指数 `baidu_index` | browser bridge, or a logged-in cookie | 搜索指数概览, 近 30 天日均 |
 | Google Trends `google_trends` | browser bridge, or a clean IP | 0–100 interest mean |
 | 抖音指数 `douyin_index` | browser bridge, logged in to creator.douyin.com | 关键词搜索指数 平均值 |
-| 微信指数 `wechat_index` | `keypulse wechat-token` (macOS) | 当日搜索指数 |
+| 微信指数 `wechat_index` | `keypulse wechat-open` + `wechat-token` (macOS) | 当日搜索指数 |
 | 微信指数(窗口) `wechat_desktop_index` | the index window open + Screen Recording | 窗口里的当日数字 |
 
 抖音 is enabled by logging in to the creator centre in the browser the bridge
@@ -65,17 +65,28 @@ X-Request-Sign: md5(search_key + query.join(""))
 ```
 
 Only the credential is fragile. `search_key` is minted by the WeChat client's
-`weapplogin` and ages out in about an hour or two, so:
+`weapplogin` and lasts about **30 minutes** (measured: minted 22:51, still
+serving 23:20, rejected 23:22), so refresh right before a scan:
 
 ```bash
+keypulse wechat-open       # opens the 「微信指数」 mini-program (mints a key)
 keypulse wechat-token      # reads openid + search_key out of WeChat's own
                            # webview cache — no proxy, no capture, no phone
+keypulse scan ...          # now
 ```
 
-Re-running that one command is the whole refresh. When the key has expired the
-scan says 凭据失效 and names the command, rather than retrying a dead key. If
-you prefer not to read the cache, `KEYPULSE_WECHAT_OPENID` /
-`KEYPULSE_WECHAT_SEARCH_KEY` work as an override.
+The scan also re-reads WeChat's cache on every call and prefers a newer key
+there, so a stale saved copy cannot mask a fresh one. When the key really has
+expired the scan says 凭据失效, reports the key's age, and names the command —
+rather than retrying a dead key. If you prefer not to read the cache,
+`KEYPULSE_WECHAT_OPENID` / `KEYPULSE_WECHAT_SEARCH_KEY` work as an override.
+
+`wechat-open` does the reliable part (focus WeChat, put 微信指数 in its search
+box) and stops before clicking a result, because that position is not stable.
+If it reports it lost focus, open the mini-program by hand — click WeChat's
+search box, type `微信指数`, open it — then run `keypulse wechat-token`.
+Prefer search over the 最近使用 list, which gets overwritten as other
+mini-programs are used.
 
 `wechat_desktop_index` is the credential-free fallback: it screenshots the
 「微信指数」 window in the macOS client and OCRs it (`scripts/wechat-index/`).

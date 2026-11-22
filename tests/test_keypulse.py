@@ -47,6 +47,9 @@ def settings(**overrides) -> Settings:
     for name in ("baidu_cookie", "wechat_openid", "wechat_search_key"):
         if name not in overrides:
             setattr(base, name, "")
+    # Reading WeChat's live cache is a real filesystem probe of the developer's
+    # container — never do that from a test unless one asks for it.
+    base.wechat_live_cache = False
     for key, value in overrides.items():
         setattr(base, key, value)
     return base
@@ -1585,3 +1588,147 @@ class WeChatTokenReaderTests(unittest.TestCase):
         age = module.key_age_seconds("1795313399279300_909998425", now=1795313399 + 600)
         self.assertAlmostEqual(age, 600, delta=1)
         self.assertIsNone(module.key_age_seconds("not-a-key"))
+
+
+class WeChatLiveCacheTests(unittest.TestCase):
+    """The saved key ages out in ~30 minutes; the client's cache is fresher.
+
+    Measured: a key minted 22:51 still answered at 23:20 and was rejected at
+    23:22.  A provider that trusts the once-saved copy reports "auth failed"
+    while a perfectly good key sits in WeChat's cache — that was a real bug,
+    not a hypothetical one.
+    """
+
+    def _provider(self, saved_key="SAVED_OLD_KEY"):
+        from keypulse.providers import wechat_index_browser as wx
+
+        cfg = settings(
+            cache_dir=Path("/tmp/keypulse-wechat-live"),
+            wechat_openid="SAVED_OPENID",
+            wechat_search_key=saved_key,
+        )
+        cfg.wechat_live_cache = True
+        provider = wx.WeChatIndex(cfg)
+        return wx, provider
+
+    def test_newer_cached_key_wins_over_the_saved_one(self):
+        wx, provider = self._provider()
+        original = wx._newest_cached
+
+        wx._newest_cached = lambda: ("CACHED_OPENID", "CACHED_NEW_KEY", "2026-11-21 22:51:06")
+        try:
+            openid, key = provider._credentials()
+        finally:
+            wx._newest_cached = original
+        self.assertEqual((openid, key), ("CACHED_OPENID", "CACHED_NEW_KEY"))
+
+    def test_saved_key_is_used_when_the_cache_is_unreadable(self):
+        wx, provider = self._provider()
+        original = wx._newest_cached
+        wx._newest_cached = lambda: None
+        try:
+            openid, key = provider._credentials()
+        finally:
+            wx._newest_cached = original
+        self.assertEqual((openid, key), ("SAVED_OPENID", "SAVED_OLD_KEY"))
+
+    def test_same_key_in_both_places_does_not_rewrite_the_store(self):
+        wx, provider = self._provider(saved_key="SAME")
+        original = wx._newest_cached
+        wx._newest_cached = lambda: ("SAVED_OPENID", "SAME", "")
+        try:
+            openid, key = provider._credentials()
+        finally:
+            wx._newest_cached = original
+        self.assertEqual((openid, key), ("SAVED_OPENID", "SAME"))
+
+    def test_live_cache_can_be_disabled(self):
+        """Tests and sandboxes must never reach into the user's WeChat."""
+        from keypulse.providers import wechat_index_browser as wx
+
+        cfg = settings(
+            cache_dir=Path("/tmp/keypulse-wechat-live"),
+            wechat_openid="SAVED_OPENID",
+            wechat_search_key="SAVED_OLD_KEY",
+        )
+        provider = wx.WeChatIndex(cfg)
+        original = wx._newest_cached
+
+        def boom():
+            raise AssertionError("cache must not be consulted when disabled")
+
+        wx._newest_cached = boom
+        try:
+            openid, key = provider._credentials()
+        finally:
+            wx._newest_cached = original
+        self.assertEqual((openid, key), ("SAVED_OPENID", "SAVED_OLD_KEY"))
+
+    def test_auth_failure_names_the_key_age(self):
+        import time as _time
+
+        from keypulse.providers.wechat_index_browser import _auth_help
+
+        old_key = f"{int(_time.time()) - 45 * 60}123_42"
+        stale = _auth_help(old_key)
+        self.assertIn("45 分钟", stale)
+        self.assertIn("30 分钟", stale)
+
+        fresh_key = f"{int(_time.time()) - 2 * 60}123_42"
+        fresh = _auth_help(fresh_key)
+        self.assertIn("2 分钟", fresh)
+        self.assertIn("wechat-token", fresh)
+
+
+class WeChatOpenCommandTests(unittest.TestCase):
+    """``keypulse wechat-open`` must report honestly, never claim success."""
+
+    def test_already_open_reports_success_without_clicking(self):
+        from keypulse import login as login_mod
+
+        original = login_mod.open_script
+
+        class FakeScript:
+            def exists(self):
+                return True
+
+            def __str__(self):
+                return "/fake/open_index.py"
+
+        login_mod.open_script = lambda: FakeScript()
+        original_run = login_mod.subprocess.run
+        login_mod.subprocess.run = lambda *a, **k: SimpleNamespace(
+            stdout='{"ok": true, "already_open": true}', stderr="", returncode=0
+        )
+        try:
+            code = login_mod.cmd_wechat_open(SimpleNamespace())
+        finally:
+            login_mod.open_script = original
+            login_mod.subprocess.run = original_run
+        self.assertEqual(code, 0)
+
+    def test_lost_focus_is_a_failure_not_a_success(self):
+        from keypulse import login as login_mod
+
+        original = login_mod.open_script
+
+        class FakeScript:
+            def exists(self):
+                return True
+
+            def __str__(self):
+                return "/fake/open_index.py"
+
+        login_mod.open_script = lambda: FakeScript()
+        original_run = login_mod.subprocess.run
+        login_mod.subprocess.run = lambda *a, **k: SimpleNamespace(
+            stdout='{"ok": false, "error": "点击后微信失去焦点，已中止"}',
+            stderr="",
+            returncode=1,
+        )
+        try:
+            code = login_mod.cmd_wechat_open(SimpleNamespace())
+        finally:
+            login_mod.open_script = original
+            login_mod.subprocess.run = original_run
+        self.assertEqual(code, 1)

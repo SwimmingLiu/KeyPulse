@@ -53,32 +53,50 @@ Read the result and set expectations in one short sentence before continuing:
 | `baidu_index` ✗ "需要 KEYPULSE_BAIDU_COOKIE" | No Baidu Index session | 百度指数需要 Cookie；可用 `keypulse login` 配置，或先看其他来源 |
 | `google_trends` ✗ "HTTP 429" | This IP is rate-limited | Google Trends 当前被限流；改用其他来源或稍后重试 |
 | `wechat_index` ✗ "需要 openid + search_key" | No 微信指数 credential yet | 微信指数要一条命令刷新凭据（见下） |
-| `wechat_index` ✗ 凭据失效 | The `search_key` aged out (~1–2h) | 直接重跑 `keypulse wechat-token` 刷新，再扫一次 |
+| `wechat_index` ✗ 凭据失效 | The `search_key` aged out (~30 min, measured) | 先 `keypulse wechat-open` 打开小程序，再 `keypulse wechat-token`，然后重扫 |
 | All ✓ | Real indexes available | 直接用指数排序 |
 
-微信指数 credentials are read from the WeChat client, so refreshing is one
-command — no proxy, no phone capture:
+微信指数 credentials are read from the WeChat client — no proxy, no phone
+capture. The `search_key` lasts about **30 minutes** (measured: minted 22:51,
+still serving 23:20, rejected 23:22), so refresh right before a scan:
 
 ```bash
-keypulse wechat-token      # macOS; reads openid + search_key from WeChat's cache
+keypulse wechat-open       # opens the mini-program (WeChat mints a new key)
+keypulse wechat-token      # reads openid + search_key from WeChat's cache
+keypulse scan ...          # now
 ```
 
-It prints how old the key is. If it says the key is over an hour old, the
-mini-program has not logged in recently: tell the user to open 「微信指数」 in
-微信 once, then re-run the command. `wechat_desktop_index` is the
-credential-free fallback (screenshots the open window), so a scan still works
-when the token is stale.
+The scan itself also re-reads WeChat's cache on every call, so if the client
+logged in more recently than the saved copy, the newer key is used
+automatically — a stale saved key can no longer mask a fresh one.
 
-To open it yourself (macOS, needs Accessibility):
+`wechat-open` stops before clicking a search result (that position is not
+stable); if it reports it could not get focus, tell the user to open it by
+hand — click WeChat's search box, type `微信指数`, open it — then run
+`keypulse wechat-token`. `wechat_desktop_index` is the credential-free
+fallback (screenshots the open window), so a scan still works when the token
+is stale.
 
-```
-Discover 面板 → Mini Programs → 最近使用 → 微信指数
-```
+To open it by hand, prefer **search** over the 最近使用 list — 最近使用 gets
+overwritten as other mini-programs are used:
 
-The 「微信指数」 icon sits in 最近使用 and the window is titled 微信指数. Once it
-opens, the client calls `weapplogin` and the key is minted — no search needed,
-just opening it refreshes the cache. Verify with
-`python3 scripts/wechat-index/read_token.py --json` (check `key_age_seconds`).
+1. **Search** — click the search box at the top of the WeChat main window,
+   type `微信指数`, open it from the results.
+2. **Mini Programs → 最近使用** — only while 微信指数 is still in that list.
+
+Check before clicking: `osascript -e 'tell application "System Events" to tell
+process "WeChat" to get name of every window'`. If the list already contains
+`微信指数`, it is open and the key is fresh — just run `keypulse wechat-token`.
+
+Once it opens, the client calls `weapplogin` and the key is minted — no search
+*inside* the mini-program needed. Verify with
+`python3 scripts/wechat-index/read_token.py --json` (`key_age_seconds` under
+~1500 means a usable key).
+
+Two traps when automating the click: another app can steal focus between
+`activate` and the click (check `frontmost` first, and never type after losing
+it — the text lands in a different app), and the screenshot is Retina 2× —
+halve image coordinates before adding the window origin.
 
 If the user has a Baidu cookie and wants the real 百度指数, tell them once:
 

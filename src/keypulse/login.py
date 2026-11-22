@@ -124,7 +124,7 @@ INSTRUCTIONS = """\
 
 它会从微信客户端自己的 webview 缓存里读出 weapplogin 的
 openid + search_key 并存下来（只读本地文件，不需要抓包、不需要 token）。
-search_key 会过期（约 1～2 小时），失效后重新执行同一条命令即可。
+search_key 有效期约 30 分钟（实测），失效后重新执行同一条命令即可。
 
 小程序本身怎么跑：在微信里打开「微信指数」小程序，搜一次词，
 扫一次登录缓存就会刷新。
@@ -144,6 +144,36 @@ search_key 会过期（约 1～2 小时），失效后重新执行同一条命�
    export KEYPULSE_WECHAT_OPENID="..."
    export KEYPULSE_WECHAT_SEARCH_KEY="..."
 """
+
+
+def open_script() -> Path:
+    """``scripts/wechat-index/open_index.py`` in the install tree."""
+    return Path(__file__).resolve().parents[2] / "scripts" / "wechat-index" / "open_index.py"
+
+
+def cmd_wechat_open(args) -> int:
+    """Bring the 微信指数 mini-program up so WeChat mints a fresh key."""
+    script = open_script()
+    if not script.exists():
+        print(f"缺少 {script}", file=sys.stderr)
+        return 1
+    argv = [sys.executable, str(script), "--json"]
+    proc = subprocess.run(argv, capture_output=True, text=True, check=False)
+    payload: dict = {}
+    for line in (proc.stdout or "").splitlines():
+        if line.strip().startswith("{"):
+            try:
+                payload = json.loads(line)
+            except ValueError:
+                continue
+    if not payload:
+        print((proc.stderr or proc.stdout or "打开小程序失败").strip())
+        return 1
+    if payload.get("already_open"):
+        print("「微信指数」已经开着——凭据就是最新的，直接扫描即可。")
+        return 0
+    print(str(payload.get("note") or payload.get("error") or "已完成"))
+    return 0 if payload.get("ok") else 1
 
 
 def cmd_wechat_token(args) -> int:
@@ -180,11 +210,13 @@ def cmd_wechat_token(args) -> int:
     age = payload.get("key_age_seconds")
     age_text = f"，已签发 {age // 60} 分钟" if isinstance(age, int) else ""
     print(f"已读取微信指数凭据并保存到 {path}（权限 0600{age_text}）。")
-    if isinstance(age, int) and age > 3600:
-        print("注意：这个 search_key 已经超过一小时，服务端可能已拒绝；"
-              "在微信里重新打开一次「微信指数」小程序会刷出新的。")
+    # A key is good for roughly half an hour; past that it is already dead,
+    # so say so instead of letting the next scan fail on a stale copy.
+    if isinstance(age, int) and age >= 1800:
+        print("注意：这个 search_key 已经超过 30 分钟，服务端会拒绝。"
+              "先在微信里打开一次「微信指数」（keypulse wechat-open），再运行本命令。")
     else:
-        print("search_key 会过期（约 1～2 小时），失效后重新执行同一条命令即可。")
+        print("search_key 有效期约 30 分钟（实测），失效后先 wechat-open 再重跑本命令。")
     return 0
 
 

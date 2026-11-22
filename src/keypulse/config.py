@@ -126,6 +126,15 @@ class Settings:
     wechat_search_key: str = field(
         default_factory=lambda: str(_lookup("wechat_search_key", "KEYPULSE_WECHAT_SEARCH_KEY", ""))
     )
+    # Read the newest key out of WeChat's own cache on every call.  On by
+    # default because a search_key lives ~30 minutes, so a key saved once is
+    # stale by the next scan; off in tests, which must not reach into the
+    # developer's WeChat container.
+    wechat_live_cache: bool = field(
+        default_factory=lambda: _as_bool(
+            _lookup("wechat_live_cache", "KEYPULSE_WECHAT_LIVE_CACHE", True)
+        )
+    )
     github_token: str = field(
         default_factory=lambda: str(_lookup("github_token", "GITHUB_TOKEN", ""))
     )
