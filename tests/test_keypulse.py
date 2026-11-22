@@ -2258,3 +2258,63 @@ class BaiduCDPTests(unittest.TestCase):
         finally:
             cdp.available, bridge.available = original_cdp, original_bridge
         self.assertEqual(picked.__name__, "BaiduIndex")
+
+
+class BaiduCDPNavigationTests(unittest.TestCase):
+    """A batch must navigate for real between keywords.
+
+    The bug this pins: a bare ``#/trend/<word>`` URL only changes the
+    fragment, which keeps the same document.  ``readyState`` is already
+    ``complete``, the router does not re-fetch, and the read times out on the
+    previous keyword's page — so only the first keyword of a batch worked.
+    """
+
+    def test_each_keyword_gets_a_unique_url(self):
+        from keypulse.providers import baidu_cdp
+
+        first = baidu_cdp.TREND_URL.format(word="a", stamp=1)
+        second = baidu_cdp.TREND_URL.format(word="b", stamp=2)
+        self.assertNotEqual(first, second)
+        # The cache-buster must be in the query, not the fragment: a fragment
+        # change does not reload the document.
+        self.assertIn("?t=1#", first)
+
+    def test_a_batch_navigates_once_per_keyword(self):
+        from keypulse.providers import baidu_cdp
+
+        cfg = settings(cache_dir=Path("/tmp/keypulse-cdp-nav"))
+        provider = baidu_cdp.BaiduIndexCDP(cfg)
+        visited: list[str] = []
+
+        class FakeBrowser:
+            def set_cookies(self, _cookies):
+                return 1
+
+            def navigate(self, url):
+                visited.append(url)
+
+            def evaluate(self, script, **_kwargs):
+                return json.dumps({"overall": 1, "mobile": 1, "yoy": "0%"})
+
+            def close(self):
+                pass
+
+        original_session = baidu_cdp.cdp.session
+        original_read = baidu_cdp.browser_cookies.read
+        baidu_cdp.cdp.session = lambda: FakeBrowser()
+        baidu_cdp.browser_cookies.read = lambda domain, **_k: [
+            SimpleNamespace(
+                name="BDUSS", value="x", domain=".baidu.com", path="/",
+                secure=True, http_only=True, expires_at=None,
+            )
+        ]
+        try:
+            provider.signals(["猫粮", "行测", "量子计算"])
+        finally:
+            baidu_cdp.cdp.session = original_session
+            baidu_cdp.browser_cookies.read = original_read
+
+        # One warm-up plus one per keyword, and every trend URL distinct.
+        trend = [url for url in visited if "/trend/" in url]
+        self.assertEqual(len(trend), 3)
+        self.assertEqual(len(set(trend)), 3)

@@ -21,6 +21,7 @@ navigated or closed"), while a hash URL loads the same page directly.
 from __future__ import annotations
 
 import json
+import time
 import urllib.parse
 
 from .. import browser_cookies
@@ -28,7 +29,13 @@ from .. import cdp
 from ..models import Signal
 from .base import Provider, normalise_region
 
-TREND_URL = "https://index.baidu.com/v2/main/index.html#/trend/{word}?words={word}"
+#: ``?t=`` is a cache-buster, and it is load-bearing: with a bare ``#/trend``
+#: URL a second keyword only changes the fragment, which keeps the same
+#: document — ``readyState`` is already ``complete`` and the router does not
+#: re-run its fetch, so the read times out on the previous keyword's page.
+#: A unique query string forces a real navigation.  Measured: 0.8 s per
+#: keyword with it, 25 s timeouts without.
+TREND_URL = "https://index.baidu.com/v2/main/index.html?t={stamp}#/trend/{word}?words={word}"
 
 #: Read the 搜索指数概览 row for one keyword.
 #: ``__KEYWORD__`` is replaced with a JSON string literal by the caller.
@@ -126,6 +133,13 @@ class BaiduIndexCDP(Provider):
         results: list[Signal] = []
         try:
             browser.set_cookies(cdp.cookie_params(cookies))
+            # Warm the app shell once: the first load builds the SPA's runtime
+            # and costs ~1.6 s, which would otherwise be charged to the first
+            # keyword and eat into its render budget.
+            try:
+                browser.navigate("https://index.baidu.com/v2/main/index.html")
+            except cdp.CDPError:
+                pass
             for keyword in keywords:
                 results.append(self._one(browser, keyword, region))
         finally:
@@ -134,7 +148,7 @@ class BaiduIndexCDP(Provider):
 
     def _one(self, browser, keyword: str, region: str) -> Signal:
         quoted = urllib.parse.quote(keyword)
-        url = TREND_URL.format(word=quoted)
+        url = TREND_URL.format(word=quoted, stamp=int(time.time() * 1000))
         script = READ_SCRIPT.replace("__KEYWORD__", json.dumps(keyword, ensure_ascii=False))
         try:
             browser.navigate(url)
