@@ -184,10 +184,12 @@ the rest of the run rather than retried per keyword.
 The full algorithm and its calibration notes are in
 [`src/keypulse/scoring.py`](src/keypulse/scoring.py).
 
+![KeyPulse architecture](docs/keypulse-architecture.svg)
+
 ## Development
 
 ```bash
-python3 -m unittest discover -s tests -v    # 79 tests, no network required
+python3 -m unittest discover -s tests -v    # 89 tests, no network required
 python evals/fixtures/verify_recording.py   # eval fixtures are usable
 claude plugin validate .                    # manifest + component checks
 ```
