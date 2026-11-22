@@ -96,9 +96,10 @@ jobs:
           # Temps are kept so a failing grader can be diagnosed from the
           # model's actual output instead of guessed at.
           name: eval-results
+          # The sandbox's `sealed/` dir is 0700 and unreadable, so the whole
+          # /tmp/e-* tree cannot be uploaded; take the traces themselves.
           path: |
             evals/results
-            /tmp/claude-eval-*
-            /tmp/e-*
+            /tmp/claude-eval-*/out
+            /tmp/e-*/out
           if-no-files-found: warn
-          include-hidden-files: true
